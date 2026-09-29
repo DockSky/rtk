@@ -35,15 +35,11 @@ pub fn run(cmd: ContainerCmd, args: &[String], verbose: u8) -> Result<i32> {
     }
 }
 
-/// Hands the cluster CLI its own `<subcommand> …` invocation, unfiltered.
+/// Hands the cluster CLI its own `<subcommand> ...` invocation, unfiltered.
 ///
-/// `rtk kubectl get pods --help` appends `-o json` to a request kubectl answers with its
-/// usage text, so `run_k8s_json` reports a decode failure on stderr and only reprints the
-/// page because its parse-error arm happens to fall back to raw stdout; `k8s_logs` reads the
-/// flag as a pod name and labels the result "Logs for --help:", which survives only because
-/// the `never_worse` cap throws the label away again (#4198). Neither rescue is something a
-/// help request should depend on. `subcommand` carries the words RTK adds on the caller's
-/// behalf, so the child sees the command it would have run either way.
+/// RTK appends `-o json`, so a usage page reaches `run_k8s_json` as a decode failure and is
+/// only reprinted by accident (#4198). `subcommand` carries the words RTK adds on the
+/// caller's behalf, so the child sees the command it would have run either way.
 fn run_help_unfiltered(
     tool: &str,
     subcommand: &[&str],
@@ -1101,8 +1097,6 @@ api-1  | Connected to database";
 
     /// #4198: `kubectl get pods --help` had `-o json` appended and its usage page fed to a
     /// JSON decoder; `kubectl logs --help` read the flag as the pod name.
-    /// The long spellings are what the shared guard keys on, so assert them here rather
-    /// than trust the wiring.
     #[test]
     fn test_help_request_bypasses_kubectl_filter() {
         let help: Vec<String> = ["--help"].iter().map(|s| s.to_string()).collect();

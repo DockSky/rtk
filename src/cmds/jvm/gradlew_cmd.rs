@@ -1468,8 +1468,6 @@ BUILD SUCCESSFUL in 3s
     }
 
     /// #4198: `./gradlew build --help` prints Gradle usage; `BuildLineFilter` kept almost none of it.
-    /// The long spellings are what the shared guard keys on, so assert them here rather
-    /// than trust the wiring.
     #[test]
     fn test_help_request_bypasses_gradlew_filter() {
         let help: Vec<String> = ["build", "--help"].iter().map(|s| s.to_string()).collect();

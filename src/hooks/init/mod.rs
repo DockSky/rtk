@@ -177,7 +177,7 @@ pub(super) const RTK_INSTRUCTIONS: &str = r##"<!-- rtk-instructions v2 -->
 
 ## Golden Rule
 
-**Always prefix commands with `rtk`**. If RTK has a dedicated filter, it uses it. If not, it passes through unchanged. Either way your flags, the behavior and the exit code reach the tool untouched -- only the output is condensed.
+**Always prefix commands with `rtk`**. If RTK has a dedicated filter, it uses it. If not, it passes through unchanged. This means RTK is always safe to use.
 
 **Important**: Even in command chains with `&&`, use `rtk`:
 ```bash

@@ -28,7 +28,7 @@ pub fn run(args: &[String], verbose: u8) -> Result<i32> {
     // 4751, silently dropping the --noreport, --dirsfirst and --filesfirst entries — the
     // usage page runs through `filter_tree_output`, which was written for a directory
     // listing and treats those lines as noise (#4198).
-    if args_utils::asks_tool_for_help(args) {
+    if args_utils::asks_tool_for_help_long_only(args) {
         let os_args: Vec<OsString> = args.iter().map(OsString::from).collect();
         return runner::run_passthrough("tree", &os_args, verbose);
     }
@@ -177,14 +177,12 @@ mod tests {
     }
 
     /// #4198: Measured: `rtk tree --help` printed 4559 bytes against the tool's 4751.
-    /// The long spellings are what the shared guard keys on, so assert them here rather
-    /// than trust the wiring.
     #[test]
     fn test_help_request_bypasses_tree_filter() {
         let help: Vec<String> = ["--help"].iter().map(|s| s.to_string()).collect();
-        assert!(args_utils::asks_tool_for_help(&help));
+        assert!(args_utils::asks_tool_for_help_long_only(&help));
 
         let normal: Vec<String> = ["-L", "2"].iter().map(|s| s.to_string()).collect();
-        assert!(!args_utils::asks_tool_for_help(&normal));
+        assert!(!args_utils::asks_tool_for_help_long_only(&normal));
     }
 }

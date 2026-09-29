@@ -116,13 +116,11 @@ pub fn run_passthrough(args: &[OsString], verbose: u8) -> Result<i32> {
     Ok(result.exit_code)
 }
 
-/// Runs `dotnet <subcommand> …` through the module's unfiltered path, for requests whose
-/// output is the CLI's own documentation rather than a build or test log.
+/// Runs `dotnet <subcommand> ...` unfiltered, for output that is documentation rather than
+/// a build or test log.
 ///
-/// `dotnet build --help` otherwise gets an injected `-bl:<tmp>.binlog` it has no use for, and
-/// the usage page is then read as an MSBuild log: no errors, no warnings, so the summariser
-/// prints its "build succeeded" line and the page is gone (#4198). `dotnet format --help`
-/// fails the same way through the report-JSON path.
+/// Otherwise `--help` gets an injected `-bl:<tmp>.binlog` and the usage page is read as an
+/// MSBuild log: no errors, no warnings, so the summariser prints "build succeeded" (#4198).
 fn run_help_unfiltered(subcommand: &str, args: &[String], verbose: u8) -> Result<i32> {
     let mut os_args: Vec<OsString> = vec![OsString::from(subcommand)];
     os_args.extend(args.iter().map(OsString::from));
@@ -3359,8 +3357,6 @@ mod tests {
     }
 
     /// #4198: `dotnet build --help` got an injected binlog and its usage page read as an MSBuild log.
-    /// The long spellings are what the shared guard keys on, so assert them here rather
-    /// than trust the wiring.
     #[test]
     fn test_help_request_bypasses_dotnet_filter() {
         let help: Vec<String> = ["--help"].iter().map(|s| s.to_string()).collect();

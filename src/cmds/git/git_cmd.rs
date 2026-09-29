@@ -136,10 +136,8 @@ pub fn run(
     };
     let args = &args;
 
-    // `git <sub> --help` is a manual page, not the output these handlers parse: run_log finds
-    // no commits in it, run_add no paths, and each prints its empty summary instead -- so the
-    // one thing the caller spelled out is the one thing RTK ate (#4198). Handing it straight
-    // to git costs a filter and keeps the page.
+    // `git <sub> --help` is a manual page, not what these handlers parse: run_log finds no
+    // commits in it and prints nothing at all (#4198).
     if args_utils::asks_tool_for_help(args) {
         let mut forwarded: Vec<OsString> = global_args.iter().map(OsString::from).collect();
         forwarded.push(OsString::from(cmd.git_name()));

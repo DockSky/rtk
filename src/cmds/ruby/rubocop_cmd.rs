@@ -652,8 +652,6 @@ mod tests {
     }
 
     /// #4198: `rubocop --help` names no format, so the usage page reached `filter_rubocop_json`.
-    /// The long spellings are what the shared guard keys on, so assert them here rather
-    /// than trust the wiring.
     #[test]
     fn test_help_request_bypasses_rubocop_filter() {
         let help: Vec<String> = ["--help"].iter().map(|s| s.to_string()).collect();

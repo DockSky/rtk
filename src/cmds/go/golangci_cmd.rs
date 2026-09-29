@@ -1002,8 +1002,6 @@ mod tests {
     }
 
     /// #4198: `golangci-lint run --help` still classifies as FilteredRun, so the usage page hit the JSON decoder.
-    /// The long spellings are what the shared guard keys on, so assert them here rather
-    /// than trust the wiring.
     #[test]
     fn test_help_request_bypasses_golangci_lint_filter() {
         let help: Vec<String> = ["run", "--help"].iter().map(|s| s.to_string()).collect();

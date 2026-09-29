@@ -1202,10 +1202,8 @@ enum KubectlCommands {
         /// All namespaces
         #[arg(short = 'A', long)]
         all: bool,
-        // `pods` is RTK's own alias for `get pods`, so the fallback that rescues every other
-        // subcommand cannot rescue this one -- it would run the literal `kubectl pods --help`,
-        // which is not a command. Forwarding the rest of the argv is what carries `--help`
-        // (and `-o wide`, and the rest) down to `get pods` (#4198).
+        // `pods` is RTK's own alias for `get pods`, so the raw-exec fallback cannot rescue
+        // it: forwarding the rest of the argv is what carries `--help` down (#4198).
         /// Further arguments forwarded to `get pods`
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         extra: Vec<String>,
@@ -1247,10 +1245,8 @@ enum OcCommands {
         /// All namespaces
         #[arg(short = 'A', long)]
         all: bool,
-        // `pods` is RTK's own alias for `get pods`, so the fallback that rescues every other
-        // subcommand cannot rescue this one -- it would run the literal `kubectl pods --help`,
-        // which is not a command. Forwarding the rest of the argv is what carries `--help`
-        // (and `-o wide`, and the rest) down to `get pods` (#4198).
+        // `pods` is RTK's own alias for `get pods`, so the raw-exec fallback cannot rescue
+        // it: forwarding the rest of the argv is what carries `--help` down (#4198).
         /// Further arguments forwarded to `get pods`
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         extra: Vec<String>,
@@ -1584,20 +1580,10 @@ fn configured_awareness_level() -> core::config::AwarenessLevel {
 
 /// True when `cmd` hands its arguments to a native binary.
 ///
-/// Read off the clap tree rather than a hand-kept list, because the list is what rotted:
-/// `disable_help_flag` had been bolted onto `psql` and `ctest` one bug report at a time
-/// while ~136 sibling wrappers kept the collision. A structural rule cannot be forgotten
-/// by the next filter to land.
-///
-/// Two shapes count. A `trailing_var_arg` positional collects the tool's own argv
-/// (`rtk grep`). Subcommands mean the node is a family RTK routes into (`rtk git`,
-/// `rtk docker`) and every one of those wraps a tool -- an RTK-only command belongs in
-/// [`core::constants::RTK_META_COMMANDS`], which `rtk_command` excludes before asking.
-/// The second clause also stands in for `external_subcommand`, which clap only infers
-/// inside `Command::build` and which therefore cannot be read off the tree
-/// `CommandFactory::command` hands back; probing for it directly costs a second full
-/// tree build (~0.5 ms on every rtk invocation, measured), so the equivalence is pinned
-/// by `cheap_wrapper_test_matches_clap_built_tree` instead of paid for at runtime.
+/// Structural rather than a hand-kept list, which is what rotted: `disable_help_flag` had
+/// reached two entries while ~136 sibling wrappers kept the collision. `has_subcommands`
+/// also stands in for `external_subcommand`, which clap only infers inside `Command::build`;
+/// `cheap_wrapper_test_matches_clap_built_tree` pins that equivalence.
 fn forwards_to_native_tool(cmd: &clap::Command) -> bool {
     cmd.get_positionals().any(|a| a.is_trailing_var_arg_set()) || cmd.has_subcommands()
 }
@@ -1605,19 +1591,10 @@ fn forwards_to_native_tool(cmd: &clap::Command) -> bool {
 /// Gives a wrapper subcommand's `-h`, `--help`, `-V`, `--version` and `help` back to the
 /// tool it wraps.
 ///
-/// Clap mints that set for every subcommand it builds, which is right for RTK's own
-/// commands and wrong for the ones that exist only to compress somebody else's output:
-/// `grep -h` is `--no-filename`, `ls -h` and `tree -h` are `--human-readable`, and
-/// `git help log` is a real subcommand. Answering them ourselves makes RTK reply to a
-/// command it was asked only to filter -- and because the hook rewrites `grep ...` into
-/// `rtk grep ...` unprompted, the agent never chose to ask RTK anything (#4198).
-///
-/// `disable_version_flag` is defensive: clap does not propagate the root's `-V` today, so
-/// it changes nothing, but the day anyone adds `propagate_version` it is what keeps
-/// `ctest -V` (`--verbose`) and `mvn -V` (`--show-version`) reaching their tools.
-///
-/// Nothing is lost: `rtk help <cmd>` still prints RTK's own usage for every subcommand,
-/// and it lives on the root, where no wrapped tool's flags can reach it.
+/// Clap mints those for every subcommand, which is wrong for one that only compresses
+/// another tool's output: `grep -h` is `--no-filename`, `ls -h` is `--human-readable`,
+/// `git help log` is a real subcommand (#4198). `rtk help <cmd>` still reaches RTK's usage.
+/// All three settings are global in clap, so one call covers the subtree.
 fn release_meta_flags(cmd: clap::Command) -> clap::Command {
     if !forwards_to_native_tool(&cmd) {
         return cmd;
@@ -1625,14 +1602,10 @@ fn release_meta_flags(cmd: clap::Command) -> clap::Command {
     cmd.disable_help_flag(true)
         .disable_version_flag(true)
         .disable_help_subcommand(true)
-        .mut_subcommands(release_meta_flags)
 }
 
-/// The `Cli` clap command with every wrapper subcommand's meta flags released.
-///
-/// RTK's own meta-commands keep theirs: `rtk proxy -h` has no wrapped tool to defer to
-/// yet -- the tool name is still a positional the user has not typed -- so that help is
-/// RTK's to give. The root keeps its own for the same reason.
+/// The `Cli` clap command with every wrapper subcommand's meta flags released. RTK's own
+/// meta-commands and the root keep theirs: `rtk proxy -h` has no wrapped tool to defer to.
 fn rtk_command() -> clap::Command {
     <Cli as clap::CommandFactory>::command().mut_subcommands(|sub| {
         if core::constants::RTK_META_COMMANDS.contains(&sub.get_name()) {
@@ -4197,9 +4170,8 @@ mod tests {
 
     // ---- #4198: RTK's meta flags belong to the tool being wrapped ----
 
-    /// The reported bug: `-h` is grep's `--no-filename`, and RTK answered it with its own
-    /// usage on stdout at exit 0 -- so an agent that only ever typed `grep -h` (the hook
-    /// adds the prefix) read RTK's help as if it were grep's matches.
+    /// `-h` is grep's `--no-filename`; RTK answered with its own usage at exit 0, so an
+    /// agent that typed `grep -h` (the hook adds the prefix) read it as grep's matches.
     #[test]
     fn grep_dash_h_reaches_grep() {
         let cli = try_parse_cli_from(["rtk", "grep", "-h", "TODO", "a.txt"]).unwrap();
@@ -4239,8 +4211,7 @@ mod tests {
         }
     }
 
-    /// Structural, so the next wrapper to land is covered without anyone remembering to
-    /// opt in -- the hand-kept version of this list had reached two entries out of ~138.
+    /// Structural, so the next wrapper is covered without anyone remembering to opt in.
     #[test]
     fn every_wrapper_subcommand_releases_its_meta_flags() {
         fn walk(cmd: &clap::Command, path: &str, misses: &mut Vec<String>) {
@@ -4274,13 +4245,9 @@ mod tests {
         );
     }
 
-    /// The other half of the contract: RTK's own commands keep their help, and so does the
-    /// root. Releasing those would leave no way to read RTK's usage at all.
-    /// `forwards_to_native_tool` reads `has_subcommands()` where it means
-    /// `external_subcommand`, because clap only infers that setting inside `Command::build`
-    /// and probing for it costs a second full tree build on every rtk invocation. This is
-    /// the proof that the cheap test and the authoritative one agree; if a future
-    /// subcommand ever splits them, it fails here rather than silently eating a flag.
+    /// The other half: releasing RTK's own help would leave no way to read its usage.
+    /// Proof that the cheap wrapper test agrees with clap's built tree. If a future
+    /// subcommand splits them, it fails here rather than silently eating a flag.
     #[test]
     fn cheap_wrapper_test_matches_clap_built_tree() {
         fn authoritative(cmd: &clap::Command) -> bool {
@@ -4351,9 +4318,8 @@ mod tests {
         }
     }
 
-    /// `err`, `test`, `summary` and `format` take a trailing command the way a wrapper does,
-    /// so the structural test calls them wrappers -- but RTK picks what runs, and there is no
-    /// `err` or `summary` binary to defer to. Releasing their help ran the flag as a command.
+    /// These take a trailing command like a wrapper, but RTK picks what runs and there is
+    /// no `err` or `summary` binary to defer to. Releasing their help ran the flag instead.
     #[test]
     fn rtk_composite_commands_keep_their_help() {
         let root = rtk_command();
@@ -4369,8 +4335,8 @@ mod tests {
         }
     }
 
-    /// `rtk help <cmd>` is what makes releasing `--help` free: it reaches RTK's usage for a
-    /// wrapper, and it lives on the root where no wrapped tool's flags can shadow it.
+    /// `rtk help <cmd>` is what makes releasing `--help` free: it lives on the root, where
+    /// no wrapped tool's flags can shadow it.
     #[test]
     fn rtk_help_subcommand_still_reaches_wrapper_usage() {
         let err = match try_parse_cli_from(["rtk", "help", "grep"]) {

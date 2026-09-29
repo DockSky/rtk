@@ -866,8 +866,6 @@ mod tests {
     }
 
     /// #4198: sbt's launcher usage carries no ScalaTest summary, so `filter_sbt_test` reported no tests.
-    /// The long spellings are what the shared guard keys on, so assert them here rather
-    /// than trust the wiring.
     #[test]
     fn test_help_request_bypasses_sbt_filter() {
         let help: Vec<String> = ["--help"].iter().map(|s| s.to_string()).collect();

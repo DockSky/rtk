@@ -37,9 +37,8 @@ impl CargoCommand {
 }
 
 pub fn run(cmd: CargoCommand, args: &[String], verbose: u8) -> Result<i32> {
-    // `cargo <sub> --help` lists flags, not diagnostics: the build handler counts zero
-    // crates and zero errors in it and prints `cargo build (0 crates compiled)`, which is
-    // all the caller gets back of a 3 KB page (#4198). Unfiltered is the only honest answer.
+    // `cargo <sub> --help` lists flags, not diagnostics: the build handler counted zero
+    // crates and returned `cargo build (0 crates compiled)` for a 3 KB page (#4198).
     if args_utils::asks_tool_for_help(args) {
         let mut forwarded = vec![OsString::from(cmd.cargo_name())];
         forwarded.extend(args.iter().map(OsString::from));

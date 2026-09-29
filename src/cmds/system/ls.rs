@@ -36,7 +36,7 @@ fn shows_dotfiles(args: &[String]) -> bool {
 pub fn run(args: &[String], verbose: u8) -> Result<i32> {
     // BSD ls rejects `--help` outright, so macOS never noticed; GNU coreutils prints a help
     // page, and filter_ls_output would read it as listing rows and keep the ones that parse.
-    if args_utils::asks_tool_for_help(args) {
+    if args_utils::asks_tool_for_help_long_only(args) {
         let os_args: Vec<std::ffi::OsString> = args.iter().map(std::ffi::OsString::from).collect();
         return runner::run_passthrough("ls", &os_args, verbose);
     }
@@ -394,10 +394,16 @@ mod tests {
     #[test]
     fn help_request_is_recognised_but_short_h_stays_human_readable() {
         let owned = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert!(args_utils::asks_tool_for_help(&owned(&["--help"])));
-        assert!(args_utils::asks_tool_for_help(&owned(&["--version"])));
-        assert!(!args_utils::asks_tool_for_help(&owned(&["-lh"])));
-        assert!(!args_utils::asks_tool_for_help(&owned(&["-h", "src/"])));
+        assert!(args_utils::asks_tool_for_help_long_only(&owned(&[
+            "--help"
+        ])));
+        assert!(args_utils::asks_tool_for_help_long_only(&owned(&[
+            "--version"
+        ])));
+        assert!(!args_utils::asks_tool_for_help_long_only(&owned(&["-lh"])));
+        assert!(!args_utils::asks_tool_for_help_long_only(&owned(&[
+            "-h", "src/"
+        ])));
     }
 
     #[test]

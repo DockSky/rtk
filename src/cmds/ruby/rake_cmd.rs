@@ -547,8 +547,6 @@ NoMethodError: undefined method `blah'
     }
 
     /// #4198: Measured: rake printed 3057 bytes of usage and RTK showed 24 ("rake test: no tests ran").
-    /// The long spellings are what the shared guard keys on, so assert them here rather
-    /// than trust the wiring.
     #[test]
     fn test_help_request_bypasses_rake_filter() {
         let help: Vec<String> = ["--help"].iter().map(|s| s.to_string()).collect();

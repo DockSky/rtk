@@ -30,9 +30,8 @@ fn run_gt_filtered(
     tee_label: &str,
     filter_fn: fn(&str) -> String,
 ) -> Result<i32> {
-    // `gt log --help` is Graphite's usage text, not a stack listing: every filter here keeps
-    // only the lines matching its own shape (branch entries, `Created pull request #N`, …),
-    // so a manual page comes back as whatever few lines happened to match (#4198).
+    // Every `gt` filter keeps only lines of its own shape, so Graphite's usage text comes
+    // back as whatever few lines happened to match (#4198).
     if args_utils::asks_tool_for_help(args) {
         let mut os_args: Vec<OsString> = subcmd.iter().map(OsString::from).collect();
         os_args.extend(args.iter().map(OsString::from));
@@ -799,8 +798,6 @@ Restacked branch fix/parsing on feat/add-db
     }
 
     /// #4198: Graphite's usage text is not a stack listing, so every `gt` filter drops nearly all of it.
-    /// The long spellings are what the shared guard keys on, so assert them here rather
-    /// than trust the wiring.
     #[test]
     fn test_help_request_bypasses_gt_filter() {
         let help: Vec<String> = ["--help"].iter().map(|s| s.to_string()).collect();

@@ -396,8 +396,6 @@ mod tests {
     }
 
     /// #4198: GNU wc's `--help` page would be read as count rows and reduced to its first column.
-    /// The long spellings are what the shared guard keys on, so assert them here rather
-    /// than trust the wiring.
     #[test]
     fn test_help_request_bypasses_wc_filter() {
         let help: Vec<String> = ["--help"].iter().map(|s| s.to_string()).collect();

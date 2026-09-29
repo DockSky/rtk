@@ -1039,8 +1039,6 @@ rspec ./spec/models/user_spec.rb:5 # User is valid
     }
 
     /// #4198: `rspec --help` names no format, so RTK appended `--format json` and the decode failed.
-    /// The long spellings are what the shared guard keys on, so assert them here rather
-    /// than trust the wiring.
     #[test]
     fn test_help_request_bypasses_rspec_filter() {
         let help: Vec<String> = ["--help"].iter().map(|s| s.to_string()).collect();

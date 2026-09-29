@@ -1173,8 +1173,6 @@ utils.go:15:5: unreachable code"#;
     }
 
     /// #4198: `go vet --help` printed 202 bytes; `filter_go_vet` reduced it to its 24-byte "no issues" line.
-    /// The long spellings are what the shared guard keys on, so assert them here rather
-    /// than trust the wiring.
     #[test]
     fn test_help_request_bypasses_go_filter() {
         let help: Vec<String> = ["--help"].iter().map(|s| s.to_string()).collect();

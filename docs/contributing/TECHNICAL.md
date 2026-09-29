@@ -225,11 +225,7 @@ Key design decisions:
 Once the rewritten command reaches RTK:
 
 1. **Telemetry**: `telemetry::maybe_ping()` fires a non-blocking daily usage ping
-2. **Clap parsing**: `try_parse_cli_from()` matches against the `Commands` enum. It parses from
-   `rtk_command()`, not the bare derived `Cli`: `release_meta_flags` first hands `-h`, `--help`,
-   `-V`, `--version` and the `help` subcommand back to every subcommand that wraps a native tool,
-   because `grep -h` is `--no-filename` and `git help log` is git's. RTK's own usage stays on
-   `rtk help <cmd>`
+2. **Clap parsing**: `Cli::try_parse()` matches against the `Commands` enum
 3. **Hook check**: `hook_check::maybe_warn()` warns if the installed hook is outdated (rate-limited to 1/day)
 4. **Integrity check**: `integrity::runtime_check()` verifies the hook's SHA-256 hash for operational commands
 5. **Routing**: A `match cli.command` dispatches to the specialized filter module

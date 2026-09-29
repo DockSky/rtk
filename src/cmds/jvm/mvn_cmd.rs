@@ -5538,8 +5538,6 @@ mod tests {
     }
 
     /// #4198: Maven honours `--help` whatever goal it was given, so the Surefire filter saw a usage page.
-    /// The long spellings are what the shared guard keys on, so assert them here rather
-    /// than trust the wiring.
     #[test]
     fn test_help_request_bypasses_mvn_filter() {
         let help: Vec<String> = ["test", "--help"].iter().map(|s| s.to_string()).collect();

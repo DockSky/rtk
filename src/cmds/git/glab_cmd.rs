@@ -261,9 +261,8 @@ where
 
 /// Run a glab command with token-optimized output.
 pub fn run(subcommand: &str, args: &[String], verbose: u8, ultra_compact: bool) -> Result<i32> {
-    // Measured against glab 1.x: `rtk glab mr diff --help` printed 1 byte against glab's
-    // 1157. RTK adds `-F json` to the request, glab prints usage instead, and the formatter
-    // reads the page as the JSON it expected (#4198).
+    // RTK adds `-F json`, so a usage page reaches the formatter as the JSON it expected:
+    // `glab mr diff --help` printed 1 byte against glab's 1157 (#4198).
     if args_utils::asks_tool_for_help(args) {
         return run_passthrough("glab", subcommand, args);
     }
@@ -1621,8 +1620,6 @@ mod tests {
     }
 
     /// #4198: Measured: `rtk glab mr diff --help` printed 1 byte against glab's 1157.
-    /// The long spellings are what the shared guard keys on, so assert them here rather
-    /// than trust the wiring.
     #[test]
     fn test_help_request_bypasses_glab_filter() {
         let help: Vec<String> = ["mr", "diff", "--help"]

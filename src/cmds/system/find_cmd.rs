@@ -1471,8 +1471,6 @@ mod tests {
     }
 
     /// #4198: `dispatch` reads a lone `--help` as a legacy name pattern and searches for that file.
-    /// The long spellings are what the shared guard keys on, so assert them here rather
-    /// than trust the wiring.
     #[test]
     fn test_help_request_bypasses_find_filter() {
         let help: Vec<String> = ["--help"].iter().map(|s| s.to_string()).collect();

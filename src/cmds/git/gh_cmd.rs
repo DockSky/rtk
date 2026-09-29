@@ -191,11 +191,8 @@ where
 }
 
 pub fn run(subcommand: &str, args: &[String], verbose: u8, ultra_compact: bool) -> Result<i32> {
-    // Measured against gh 2.x: `rtk gh pr diff --help` printed 1 byte against gh's 1854, and
-    // `gh pr checks --help` 55 against 1562. RTK appends its own `--json …` selection, gh
-    // prints usage instead, and the formatters read the page as the JSON they expected.
-    // Some subcommands survive this by accident; a help request should not depend on it
-    // (#4198).
+    // RTK appends its own `--json ...` selection, so a usage page reaches the formatters as
+    // the JSON they expected: `gh pr diff --help` printed 1 byte against gh's 1854 (#4198).
     if args_utils::asks_tool_for_help(args) {
         return run_passthrough("gh", subcommand, args);
     }
@@ -1791,8 +1788,6 @@ ___
     }
 
     /// #4198: Measured: `rtk gh pr diff --help` printed 1 byte against gh's 1854.
-    /// The long spellings are what the shared guard keys on, so assert them here rather
-    /// than trust the wiring.
     #[test]
     fn test_help_request_bypasses_gh_filter() {
         let help: Vec<String> = ["pr", "diff", "--help"]

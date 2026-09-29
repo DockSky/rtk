@@ -5,27 +5,32 @@ use crate::core::arg_tokenizer::{self, TokenKind};
 
 /// True when these arguments ask the wrapped tool for its own help or version banner.
 ///
-/// A filter that summarises rather than line-filters destroys that banner: `rtk cargo test
-/// --help` reported "0 tests" and `rtk git log --help` printed nothing at all, because the
-/// filter looked for test results and commits in a manual page and found none. Output the
-/// caller asked for in so many words is exactly the output RTK must not compress, so a
-/// wrapper that sees this returns true hands the invocation to the tool untouched.
+/// A filter that summarises finds no diagnostics in a usage page and prints its empty
+/// summary instead, so `cargo test --help` returned nothing (#4198). A wrapper that sees
+/// this returns true runs the tool unfiltered.
 ///
-/// Scoped before `--`, because past the boundary the token is an operand -- `rtk grep --
-/// --help` searches *for* that string. Restricted to the long spellings, which mean the
-/// same thing in every tool RTK wraps; the short forms are deliberately left out, since
-/// `-h` is `--help` for rg but `--no-filename` for grep, and `-V` is `--version` for cargo
-/// but `--verbose` for ctest. Only a filter that knows its own tool can read those, and
-/// [`crate::cmds::system::search`] does exactly that on top of this.
-///
-/// Uses the structural tokenizer, so a value-taking flag whose value happens to be the
-/// literal `--help` (`git log --grep --help`) reads as a request. The cost is one
-/// unfiltered command; the reverse default would eat a manual page.
+/// Scoped before `--`, since past the boundary it is an operand: `rtk grep -- --help`
+/// searches *for* that string. The tokenizer is structural, so a value that happens to be
+/// `--help` reads as a request; that costs one unfiltered run, the reverse eats a man page.
 pub fn asks_tool_for_help(args: &[String]) -> bool {
+    asks_for_help(args, true)
+}
+
+/// Same, for a tool that defines `-h` as its own flag: `ls -h` and `tree -h` are
+/// `--human-readable`. (`grep -h` is `--no-filename`; `search.rs` reads it per engine.)
+pub fn asks_tool_for_help_long_only(args: &[String]) -> bool {
+    asks_for_help(args, false)
+}
+
+fn asks_for_help(args: &[String], short_h_is_help: bool) -> bool {
     let tokens = arg_tokenizer::tokenize(args);
     arg_tokenizer::before_dashdash(&tokens)
         .iter()
-        .any(|t| t.kind == TokenKind::Long && matches!(t.text, "help" | "version"))
+        .any(|t| match t.kind {
+            TokenKind::Long => matches!(t.text, "help" | "version"),
+            TokenKind::Short => short_h_is_help && t.text == "h",
+            _ => false,
+        })
 }
 
 /// Restores `--` tokens that clap consumed when using `trailing_var_arg = true`.
@@ -88,12 +93,25 @@ mod tests {
     }
 
     #[test]
+    fn short_h_is_help_for_most_tools_but_not_for_ls_and_tree() {
+        // `cargo build -h` is a usage page the build filter would report as "0 crates
+        // compiled"; `ls -h` and `tree -h` are --human-readable and must stay filtered.
+        assert!(asks(&["build", "-h"]));
+        assert!(asks(&["-ih"]), "and inside a cluster");
+        let long_only = |a: &[&str]| {
+            asks_tool_for_help_long_only(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+        };
+        assert!(!long_only(&["-h", "src/"]));
+        assert!(!long_only(&["-lh"]));
+        assert!(long_only(&["--help"]));
+    }
+
+    #[test]
     fn short_forms_are_left_to_the_filter_that_knows_the_tool() {
-        // `-h` is --no-filename for grep and --help for rg; `-V` is --version for cargo
-        // and --verbose for ctest. Reading them here would be guessing.
-        assert!(!asks(&["-h"]));
+        // `-V` is --version for cargo but --verbose for ctest, so it is never read here.
+        // `-h` is --no-filename for grep, which search.rs resolves per engine.
         assert!(!asks(&["-V"]));
-        assert!(!asks(&["-h", "TODO", "a.txt"]));
+        assert!(!asks(&["-v"]));
     }
 
     #[test]
