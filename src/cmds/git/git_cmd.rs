@@ -35,7 +35,7 @@ pub enum GitCommand {
 }
 
 impl GitCommand {
-    /// The word git itself expects, so a passthrough can rebuild the argv clap took apart.
+    /// The word git expects, for rebuilding the argv clap took apart.
     fn git_name(&self) -> &'static str {
         match self {
             GitCommand::Diff => "diff",
@@ -136,9 +136,8 @@ pub fn run(
     };
     let args = &args;
 
-    // These handlers run git through exec_capture rather than runner::run, so the central
-    // guard never sees them. `git log --help` is a manual page: run_log finds no commits in
-    // it and prints nothing at all (#4198).
+    // These handlers use exec_capture, not runner::run, so the central guard never sees
+    // them (#4198).
     if runner::requests_help_args("git", args) {
         let mut forwarded: Vec<OsString> = global_args.iter().map(OsString::from).collect();
         forwarded.push(OsString::from(cmd.git_name()));

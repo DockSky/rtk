@@ -35,8 +35,6 @@ pub fn run(args: &[String], verbose: u8) -> Result<i32> {
     let subcommand = args.first().map(|s| s.as_str()).unwrap_or("");
 
     let (cmd_str, filtered, exit_code) = match subcommand {
-        // `pip list --help` is a usage page, not a package table: the list filter found no
-        // rows in it and reported 63 bytes of pip's 3412 (#4198).
         _ if crate::core::runner::requests_help_args(base_cmd, args) => {
             run_passthrough(base_cmd, args, verbose)?
         }

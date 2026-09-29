@@ -60,8 +60,6 @@ pub fn run(args: &[String], verbose: u8) -> Result<i32> {
         eprintln!("Running: {}", original_cmd);
     }
 
-    // `uv run --help` is uv's usage, not a program's output for filter_uv_run_output to
-    // trim; it joins the non-`run` passthrough rather than losing most of the page (#4198).
     if args.first().map(String::as_str) != Some("run")
         || crate::core::runner::requests_help_args("uv", args)
     {

@@ -37,7 +37,6 @@ pub fn run_restore(args: &[String], verbose: u8) -> Result<i32> {
 
 pub fn run_format(args: &[String], verbose: u8) -> Result<i32> {
     let args = &args_utils::restore_double_dash(args);
-    // Same as the binlog path, through the report-JSON reader instead (#4198).
     if crate::core::runner::requests_help_args("dotnet", args) {
         return run_passthrough(&forwarded_dotnet_args("format", args), verbose);
     }
@@ -80,8 +79,6 @@ pub fn run_format(args: &[String], verbose: u8) -> Result<i32> {
     Ok(result.exit_code)
 }
 
-/// Rebuilds the argv `run_passthrough` expects: the subcommand RTK routed on, then the
-/// caller's own arguments.
 fn forwarded_dotnet_args(subcommand: &str, args: &[String]) -> Vec<OsString> {
     let mut out = vec![OsString::from(subcommand)];
     out.extend(args.iter().map(OsString::from));
@@ -127,8 +124,7 @@ pub fn run_passthrough(args: &[OsString], verbose: u8) -> Result<i32> {
 
 fn run_dotnet_with_binlog(subcommand: &str, args: &[String], verbose: u8) -> Result<i32> {
     let args = &args_utils::restore_double_dash(args);
-    // Otherwise `--help` gets an injected `-bl:<tmp>.binlog` and the usage page is read as
-    // an MSBuild log: no errors, no warnings, so the summariser prints "succeeded" (#4198).
+    // Otherwise `--help` gets an injected `-bl:` and is read as an MSBuild log (#4198).
     if crate::core::runner::requests_help_args("dotnet", args) {
         return run_passthrough(&forwarded_dotnet_args(subcommand, args), verbose);
     }
