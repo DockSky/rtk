@@ -1,7 +1,6 @@
 //! Filters directory listings into a compact tree format.
 
 use super::constants::NOISE_DIRS;
-use crate::core::args_utils;
 use crate::core::runner::{self, RunOptions};
 use crate::core::truncate::CAP_INVENTORY;
 use crate::core::utils::{ChildArgExt, resolved_command};
@@ -34,13 +33,6 @@ fn shows_dotfiles(args: &[String]) -> bool {
 }
 
 pub fn run(args: &[String], verbose: u8) -> Result<i32> {
-    // BSD ls rejects `--help` outright, so macOS never noticed; GNU coreutils prints a help
-    // page, and filter_ls_output would read it as listing rows and keep the ones that parse.
-    if args_utils::asks_tool_for_help_long_only(args) {
-        let os_args: Vec<std::ffi::OsString> = args.iter().map(std::ffi::OsString::from).collect();
-        return runner::run_passthrough("ls", &os_args, verbose);
-    }
-
     let show_all = shows_dotfiles(args);
 
     // Per `man ls`, the long listing is triggered by `-l` and also implied by
@@ -388,23 +380,6 @@ fn compact_ls(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// BSD ls errors on `--help` and GNU ls prints a page; either way the listing filter has
-    /// no business reading it, and `-h` stays with ls as `--human-readable`.
-    #[test]
-    fn help_request_is_recognised_but_short_h_stays_human_readable() {
-        let owned = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert!(args_utils::asks_tool_for_help_long_only(&owned(&[
-            "--help"
-        ])));
-        assert!(args_utils::asks_tool_for_help_long_only(&owned(&[
-            "--version"
-        ])));
-        assert!(!args_utils::asks_tool_for_help_long_only(&owned(&["-lh"])));
-        assert!(!args_utils::asks_tool_for_help_long_only(&owned(&[
-            "-h", "src/"
-        ])));
-    }
 
     #[test]
     fn test_compact_basic() {

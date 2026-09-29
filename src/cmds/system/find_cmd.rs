@@ -1,6 +1,5 @@
 //! Filters find results by grouping files by directory.
 
-use crate::core::args_utils;
 use crate::core::tracking;
 use crate::core::truncate::CAP_INVENTORY;
 use crate::core::utils::ChildArgExt;
@@ -322,14 +321,11 @@ fn run_compress(
 
 /// Entry point from main.rs — dispatches on find's grammar then delegates.
 pub fn run_from_args(args: &[String], verbose: u8) -> Result<i32> {
-    // `find --help` carries no path and no expression, so `dispatch` reads the flag as a
-    // legacy name pattern and RTK searches for a file called `--help` instead. Measured on
-    // BSD find: 136 bytes against the tool's own 171; on GNU find the flag prints a full
-    // manual page that a directory listing would replace outright (#4198).
-    if args_utils::asks_tool_for_help(args) {
+    // dispatch() reads a lone `--help` as find's legacy name pattern, so the guard has to
+    // come first; on GNU find that turned a usage page into a file listing (#4198).
+    if crate::core::runner::requests_help_args("find", args) {
         return run_verbatim(args, verbose);
     }
-
     match dispatch(args)? {
         Dispatch::Native(parsed) => run(
             &parsed.pattern,
@@ -1468,18 +1464,5 @@ mod tests {
         assert!(filtered_hint(&[]).is_none());
         let h = filtered_hint(&["secret.txt".to_string(), ".hidden/h.txt".to_string()]).unwrap();
         assert!(h.starts_with("... (2 filtered"), "{h}");
-    }
-
-    /// #4198: `dispatch` reads a lone `--help` as a legacy name pattern and searches for that file.
-    #[test]
-    fn test_help_request_bypasses_find_filter() {
-        let help: Vec<String> = ["--help"].iter().map(|s| s.to_string()).collect();
-        assert!(args_utils::asks_tool_for_help(&help));
-
-        let normal: Vec<String> = [".", "-name", "*.rs"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        assert!(!args_utils::asks_tool_for_help(&normal));
     }
 }

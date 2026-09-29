@@ -1,6 +1,5 @@
 //! Filters pip and uv package manager output.
 
-use crate::core::args_utils;
 use crate::core::guard::never_worse;
 use crate::core::stream::exec_capture;
 use crate::core::tracking;
@@ -35,14 +34,14 @@ pub fn run(args: &[String], verbose: u8) -> Result<i32> {
     // Detect subcommand
     let subcommand = args.first().map(|s| s.as_str()).unwrap_or("");
 
-    // Bare `pip --help` already reached the passthrough arm; `pip list --help` did not,
-    // and the injected `--format=json` plus filter_pip_list turned pip's 9258-byte page
-    // into a 64-byte JSON parse error (#4198). Both now take the same route.
-    let asked_for_help = args_utils::asks_tool_for_help(args);
-
     let (cmd_str, filtered, exit_code) = match subcommand {
-        "list" if !asked_for_help => run_list(base_cmd, &args[1..], verbose)?,
-        "outdated" if !asked_for_help => run_outdated(base_cmd, &args[1..], verbose)?,
+        // `pip list --help` is a usage page, not a package table: the list filter found no
+        // rows in it and reported 63 bytes of pip's 3412 (#4198).
+        _ if crate::core::runner::requests_help_args(base_cmd, args) => {
+            run_passthrough(base_cmd, args, verbose)?
+        }
+        "list" => run_list(base_cmd, &args[1..], verbose)?,
+        "outdated" => run_outdated(base_cmd, &args[1..], verbose)?,
         "install" | "uninstall" | "show" => {
             // Passthrough for write operations
             run_passthrough(base_cmd, args, verbose)?
@@ -246,19 +245,6 @@ fn filter_pip_outdated(output: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Bare `pip --help` already reached the passthrough arm; `pip list --help` did not, and
-    /// the injected `--format=json` left filter_pip_list with a JSON parse error.
-    #[test]
-    fn help_request_is_recognised_in_pip_subcommand_args() {
-        let asks = |a: &[&str]| {
-            args_utils::asks_tool_for_help(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>())
-        };
-        assert!(asks(&["list", "--help"]));
-        assert!(asks(&["outdated", "--help"]));
-        assert!(asks(&["--help"]));
-        assert!(!asks(&["list", "--user"]));
-    }
 
     #[test]
     fn test_prog_label_never_doubles_pip() {

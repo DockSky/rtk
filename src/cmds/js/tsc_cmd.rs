@@ -1,6 +1,5 @@
 //! Filters TypeScript compiler errors, grouping them by file and error code.
 
-use crate::core::args_utils;
 use crate::core::runner;
 use crate::core::stream::{BlockHandler, BlockStreamFilter};
 use crate::core::truncate::{CAP_WARNINGS, reduced};
@@ -97,19 +96,6 @@ pub fn run(runner: Option<&str>, args: &[String], verbose: u8) -> Result<i32> {
             format!("{} tsc", exec_runner(runner, MissingTool::Fetch))
         };
         eprintln!("Running: {} {}", via, args.join(" "));
-    }
-
-    // `tsc --help` is a manual page with no diagnostics in it, so TscHandler counted zero
-    // errors and printed its 28-byte "no errors" line over all 5226 bytes of the page
-    // (#4198). The same command, unfiltered, is what the caller spelled out.
-    if args_utils::asks_tool_for_help(args) {
-        return runner::run(
-            cmd,
-            "tsc",
-            &args.join(" "),
-            runner::RunMode::Passthrough,
-            runner::RunOptions::default(),
-        );
     }
 
     runner::run_streamed(
@@ -386,18 +372,6 @@ pub(crate) fn filter_tsc_output(output: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// `tsc --help` has no diagnostics in it, so TscHandler counted zero errors and printed
-    /// its summary over the page. The guard has to read the argv the caller actually typed.
-    #[test]
-    fn help_request_is_recognised_in_tsc_args() {
-        let asks = |a: &[&str]| {
-            args_utils::asks_tool_for_help(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>())
-        };
-        assert!(asks(&["--help"]));
-        assert!(asks(&["-p", "tsconfig.json", "--version"]));
-        assert!(!asks(&["--noEmit", "-p", "tsconfig.json"]));
-    }
 
     #[test]
     fn test_filter_tsc_output() {

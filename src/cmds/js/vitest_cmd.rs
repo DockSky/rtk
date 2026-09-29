@@ -6,8 +6,6 @@ use serde::Deserialize;
 use std::sync::LazyLock;
 
 use crate::Commands;
-use crate::core::args_utils;
-use crate::core::runner;
 use crate::core::stream::exec_capture;
 use crate::core::tracking;
 use crate::core::utils::{package_manager_exec, strip_ansi};
@@ -204,27 +202,6 @@ fn extract_failures_regex(output: &str) -> Vec<TestFailure> {
 pub fn run_test(command: &Commands, args: &[String], verbose: u8) -> Result<i32> {
     let timer = tracking::TimedExecution::start();
     let mut passthrough_requested = false;
-
-    // A help page holds no test results, so format_test_output reported a run of zero
-    // tests: `rtk vitest --help` emitted 2163 bytes for vitest's 10939 and `rtk jest
-    // --help` the same 2161 for jest's 26881 (#4198). The injected reporter flags
-    // (`run --reporter=json`, `--no-watch --json`) would also aim the page at the wrong
-    // subcommand, so the forwarded argv is the user's own.
-    if args_utils::asks_tool_for_help(args) {
-        let framework = match command {
-            Commands::Jest { .. } => "jest",
-            _ => "vitest",
-        };
-        let mut cmd = package_manager_exec(framework);
-        cmd.args(args);
-        return runner::run(
-            cmd,
-            framework,
-            &args.join(" "),
-            runner::RunMode::Passthrough,
-            runner::RunOptions::default(),
-        );
-    }
 
     let (framework, mut cmd) = match command {
         Commands::Vitest { .. } => {
@@ -436,19 +413,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// A manual page holds no test results, so format_test_output reported a run of zero
-    /// tests for both vitest and jest.
-    #[test]
-    fn help_request_is_recognised_in_test_runner_args() {
-        let asks = |a: &[&str]| {
-            args_utils::asks_tool_for_help(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>())
-        };
-        assert!(asks(&["--help"]));
-        assert!(asks(&["--version"]));
-        assert!(!asks(&["run", "--reporter=json"]));
-        assert!(!asks(&["src/foo.test.ts"]));
-    }
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()

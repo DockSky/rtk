@@ -136,9 +136,10 @@ pub fn run(
     };
     let args = &args;
 
-    // `git <sub> --help` is a manual page, not what these handlers parse: run_log finds no
-    // commits in it and prints nothing at all (#4198).
-    if args_utils::asks_tool_for_help(args) {
+    // These handlers run git through exec_capture rather than runner::run, so the central
+    // guard never sees them. `git log --help` is a manual page: run_log finds no commits in
+    // it and prints nothing at all (#4198).
+    if runner::requests_help_args("git", args) {
         let mut forwarded: Vec<OsString> = global_args.iter().map(OsString::from).collect();
         forwarded.push(OsString::from(cmd.git_name()));
         if let GitCommand::Stash {
@@ -3803,34 +3804,6 @@ pub fn run_passthrough(args: &[OsString], global_args: &[String], verbose: u8) -
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// `git <sub> --help` is a manual page; run_log used to mine it for commits, find none
-    /// and print nothing at all. The guard has to key off the real argv, boundary included.
-    #[test]
-    fn help_request_is_recognised_for_every_git_subcommand_shape() {
-        let asks = |a: &[&str]| {
-            args_utils::asks_tool_for_help(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>())
-        };
-        assert!(asks(&["--help"]));
-        assert!(asks(&["-5", "--help"]));
-        assert!(!asks(&["-5", "--oneline"]));
-        // `git log -- --help` is a pathspec named "--help", not a request.
-        assert!(!asks(&["--", "--help"]));
-    }
-
-    #[test]
-    fn git_name_round_trips_every_subcommand() {
-        assert_eq!(GitCommand::Log.git_name(), "log");
-        assert_eq!(GitCommand::Status.git_name(), "status");
-        assert_eq!(GitCommand::Worktree.git_name(), "worktree");
-        assert_eq!(
-            GitCommand::Stash {
-                subcommand: Some("list".into())
-            }
-            .git_name(),
-            "stash"
-        );
-    }
 
     #[test]
     fn test_branch_dash_u_links_its_upstream_value_not_a_free_positional() {

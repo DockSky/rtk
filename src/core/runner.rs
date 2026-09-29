@@ -269,6 +269,55 @@ fn last_lines_offset(text: &str, n: usize) -> Option<(usize, usize)> {
         .map(|(index, _)| (index + 1, skipped))
 }
 
+/// Tools that spell something other than help with `-h`: `psql -h host`, `ls -h` and
+/// `tree -h` (human-readable sizes), `grep -h` (`--no-filename`). Everywhere else a bare
+/// `-h` is the usage request it is for cargo, go, git, docker, rg and the rest.
+const DASH_H_IS_NOT_HELP: &[&str] = &["psql", "ls", "tree", "grep"];
+
+/// True when this invocation asks the tool for its own usage or version banner.
+///
+/// A filter models the tool's normal output, so it reads a usage page as an empty run:
+/// `cargo build --help` came back as `cargo build (0 crates compiled)` and
+/// `cargo test --help` as nothing at all, because the handler counted zero crates and
+/// zero errors in it. `guard::never_worse` does not catch that, since it compares token
+/// counts and the summary is the smaller of the two. Usage is not a filtering job (#4198).
+///
+/// Read by position, not grammar: `git log --grep --help` runs unfiltered rather than
+/// searching for the string. One unfiltered command is the cheaper mistake.
+///
+/// A Node tool that is not on PATH runs through its package runner, so `pnpm exec --`,
+/// `yarn exec --` and `npx [--no-install] --` are RTK's own words; the tool's argv starts
+/// after them, and the `--` they end with is not the caller's boundary.
+pub fn requests_help(cmd: &Command) -> bool {
+    let stem = std::path::Path::new(cmd.get_program())
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default();
+    let args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
+    asks_for_usage(stem, &args)
+}
+
+/// The same rule for a filter that has the tool name and argv but runs the child itself
+/// rather than through [`run`].
+pub fn requests_help_args(tool: &str, args: &[String]) -> bool {
+    let args: Vec<&std::ffi::OsStr> = args.iter().map(std::ffi::OsStr::new).collect();
+    asks_for_usage(tool, &args)
+}
+
+fn asks_for_usage(stem: &str, args: &[&std::ffi::OsStr]) -> bool {
+    let dash_h_is_help = !DASH_H_IS_NOT_HELP.contains(&stem);
+    let runner_prefix = match (stem, args) {
+        ("pnpm" | "yarn", [exec, sep, ..]) if *exec == "exec" && *sep == "--" => 2,
+        ("npx", [flag, sep, ..]) if *flag == "--no-install" && *sep == "--" => 2,
+        ("npx", [sep, ..]) if *sep == "--" => 1,
+        _ => 0,
+    };
+    args[runner_prefix..]
+        .iter()
+        .take_while(|arg| **arg != "--")
+        .any(|arg| *arg == "--help" || *arg == "--version" || (dash_h_is_help && *arg == "-h"))
+}
+
 pub fn run(
     cmd: Command,
     tool_name: &str,
@@ -276,6 +325,13 @@ pub fn run(
     mode: RunMode<'_>,
     opts: RunOptions<'_>,
 ) -> Result<i32> {
+    // The tool was asked for its own usage; handing that to a filter built for its normal
+    // output is how a help page becomes "0 crates compiled" (#4198).
+    let mode = if requests_help(&cmd) {
+        RunMode::Passthrough
+    } else {
+        mode
+    };
     let result = run_inner(cmd, tool_name, args_display, mode, opts);
     // #2375
     stream::die_by_relayed_signal();
@@ -1262,6 +1318,84 @@ mod forwarded_stderr_tests {
         let out = with_hint(&raw, 0, "stdout");
         assert!(out.contains("警告 59"), "{out}");
         assert!(out.len() < raw.len());
+    }
+}
+
+#[cfg(test)]
+mod requests_help_tests {
+    use super::*;
+
+    fn built(program: &str, args: &[&str]) -> Command {
+        let mut c = Command::new(program);
+        c.args(args);
+        c
+    }
+
+    #[test]
+    fn long_spellings_are_a_usage_request() {
+        assert!(requests_help(&built("cargo", &["build", "--help"])));
+        assert!(requests_help(&built("cargo", &["--version"])));
+        assert!(!requests_help(&built("cargo", &["build", "--release"])));
+        assert!(!requests_help(&built("cargo", &[])));
+    }
+
+    #[test]
+    fn short_h_is_a_request_except_where_the_tool_defines_it() {
+        // `cargo build -h` is a usage page the build handler reported as "0 crates
+        // compiled"; `ls -h` and `tree -h` are --human-readable, `grep -h` is
+        // --no-filename, `psql -h` takes a host.
+        assert!(requests_help(&built("cargo", &["build", "-h"])));
+        assert!(requests_help(&built("go", &["vet", "-h"])));
+        for tool in ["ls", "tree", "grep", "psql"] {
+            assert!(
+                !requests_help(&built(tool, &["-h"])),
+                "{tool} -h is its own flag"
+            );
+        }
+        assert!(
+            requests_help(&built("ls", &["--help"])),
+            "the long form is still help everywhere"
+        );
+    }
+
+    #[test]
+    fn the_program_is_read_from_its_path() {
+        assert!(requests_help(&built("/usr/bin/cargo", &["-h"])));
+        assert!(!requests_help(&built("/bin/ls", &["-h"])));
+    }
+
+    #[test]
+    fn past_the_boundary_it_is_an_operand() {
+        // `rtk grep -- --help f.txt` searches *for* that string.
+        assert!(!requests_help(&built("grep", &["--", "--help", "f.txt"])));
+        assert!(requests_help(&built("grep", &["--help", "--", "f.txt"])));
+    }
+
+    #[test]
+    fn rtks_own_package_runner_prefix_is_not_the_boundary() {
+        // A Node tool off PATH runs as `pnpm exec -- vitest --help`; the `--` is RTK's.
+        assert!(requests_help(&built(
+            "pnpm",
+            &["exec", "--", "vitest", "--help"]
+        )));
+        assert!(requests_help(&built("npx", &["--", "tsc", "--help"])));
+        assert!(requests_help(&built(
+            "npx",
+            &["--no-install", "--", "tsc", "-h"]
+        )));
+        assert!(!requests_help(&built(
+            "pnpm",
+            &["exec", "--", "vitest", "run"]
+        )));
+    }
+
+    #[test]
+    fn the_args_form_agrees_with_the_command_form() {
+        let owned = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(requests_help_args("git", &owned(&["log", "--help"])));
+        assert!(!requests_help_args("git", &owned(&["log", "-5"])));
+        assert!(!requests_help_args("ls", &owned(&["-lh"])));
+        assert!(!requests_help_args("find", &owned(&["--", "--help"])));
     }
 }
 

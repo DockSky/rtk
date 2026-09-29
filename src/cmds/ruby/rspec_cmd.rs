@@ -5,7 +5,6 @@
 //! (e.g., user specified `--format documentation`) or when injected JSON output
 //! fails to parse.
 
-use crate::core::args_utils;
 use crate::core::runner;
 use crate::core::truncate::{CAP_WARNINGS, reduced};
 use crate::core::utils::{fallback_tail, ruby_exec, truncate};
@@ -71,21 +70,6 @@ struct RspecSummary {
 
 pub fn run(args: &[String], verbose: u8) -> Result<i32> {
     let mut cmd = ruby_exec("rspec");
-
-    // `rspec --help` has no `--format`, so RTK would append `--format json` and then hand the
-    // usage page to the JSON decoder; the decode fails and the caller gets a parse-error tail
-    // in place of the banner (#4198). The child is the one `ruby_exec` built, so a project
-    // with a Gemfile still goes through `bundle exec`.
-    if args_utils::asks_tool_for_help(args) {
-        cmd.args(args);
-        return runner::run(
-            cmd,
-            "rspec",
-            &args.join(" "),
-            runner::RunMode::Passthrough,
-            runner::RunOptions::default(),
-        );
-    }
 
     let has_format = args.iter().any(|a| {
         a == "--format"
@@ -1036,15 +1020,5 @@ rspec ./spec/models/user_spec.rb:5 # User is valid
     fn test_has_format_flag_equals() {
         let args = ["--format=json".to_string()];
         assert!(args.iter().any(|a| a.starts_with("--format=")));
-    }
-
-    /// #4198: `rspec --help` names no format, so RTK appended `--format json` and the decode failed.
-    #[test]
-    fn test_help_request_bypasses_rspec_filter() {
-        let help: Vec<String> = ["--help"].iter().map(|s| s.to_string()).collect();
-        assert!(args_utils::asks_tool_for_help(&help));
-
-        let normal: Vec<String> = ["spec/models"].iter().map(|s| s.to_string()).collect();
-        assert!(!args_utils::asks_tool_for_help(&normal));
     }
 }

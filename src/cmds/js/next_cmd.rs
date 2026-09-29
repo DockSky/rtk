@@ -1,6 +1,5 @@
 //! Filters Next.js build output down to route metrics and bundle sizes.
 
-use crate::core::args_utils;
 use crate::core::runner;
 use crate::core::truncate::CAP_WARNINGS;
 use crate::core::utils::{resolved_command, strip_ansi, tool_exists, truncate};
@@ -29,20 +28,6 @@ pub fn run(args: &[String], verbose: u8) -> Result<i32> {
     if verbose > 0 {
         let tool = if next_exists { "next" } else { "npx next" };
         eprintln!("Running: {} build", tool);
-    }
-
-    // filter_next_build counts routes and bundle sizes; a help page has none, so it
-    // renders an empty build report over the page (#4198). `build` stays in the forwarded
-    // argv because `rtk next` *is* `next build` -- the help the caller gets is the help for
-    // the command rtk would have run.
-    if args_utils::asks_tool_for_help(args) {
-        return runner::run(
-            cmd,
-            "next build",
-            &args.join(" "),
-            runner::RunMode::Passthrough,
-            runner::RunOptions::default(),
-        );
     }
 
     runner::run_filtered(
@@ -194,18 +179,6 @@ fn extract_time(line: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// filter_next_build counts routes and bundle sizes; a help page has neither, so it
-    /// rendered an empty build report over it.
-    #[test]
-    fn help_request_is_recognised_in_next_args() {
-        let asks = |a: &[&str]| {
-            args_utils::asks_tool_for_help(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>())
-        };
-        assert!(asks(&["--help"]));
-        assert!(!asks(&["--no-lint"]));
-        assert!(!asks(&["--debug"]));
-    }
 
     #[test]
     fn test_filter_next_build() {

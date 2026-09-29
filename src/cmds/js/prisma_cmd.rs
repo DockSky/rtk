@@ -1,8 +1,6 @@
 //! Filters Prisma CLI output by stripping ASCII art and verbose decoration.
 
-use crate::core::args_utils;
 use crate::core::guard::never_worse;
-use crate::core::runner;
 use crate::core::stream::exec_capture;
 use crate::core::tracking;
 use crate::core::utils::{resolved_command, tool_exists};
@@ -23,54 +21,7 @@ pub enum MigrateSubcommand {
     Deploy,
 }
 
-impl PrismaCommand {
-    /// The prisma argv this variant stands for, subcommand words and all.
-    ///
-    /// The run_* handlers below push these same words onto the child command; this is the
-    /// one place that spells them out for a caller that needs the argv without the filter.
-    fn prisma_argv(&self) -> Vec<String> {
-        match self {
-            PrismaCommand::Generate => vec!["generate".to_string()],
-            PrismaCommand::Migrate { subcommand } => {
-                let mut argv = vec!["migrate".to_string()];
-                match subcommand {
-                    MigrateSubcommand::Dev { name } => {
-                        argv.push("dev".to_string());
-                        if let Some(n) = name {
-                            argv.push("--name".to_string());
-                            argv.push(n.clone());
-                        }
-                    }
-                    MigrateSubcommand::Status => argv.push("status".to_string()),
-                    MigrateSubcommand::Deploy => argv.push("deploy".to_string()),
-                }
-                argv
-            }
-            PrismaCommand::DbPush => vec!["db".to_string(), "push".to_string()],
-        }
-    }
-}
-
 pub fn run(cmd: PrismaCommand, args: &[String], verbose: u8) -> Result<i32> {
-    // `prisma migrate dev --help` is a manual page, and every filter below reads a
-    // migration report out of it: filter_migrate_dev finds no migration and prints its
-    // empty summary over the page (#4198). never_worse does not catch this -- it only
-    // stops output from growing, and a summary is always smaller than the page it ate.
-    if args_utils::asks_tool_for_help(args) {
-        let mut child = create_prisma_command();
-        let subcommand = cmd.prisma_argv();
-        child.args(&subcommand);
-        child.args(args);
-        let display = format!("{} {}", subcommand.join(" "), args.join(" "));
-        return runner::run(
-            child,
-            "prisma",
-            display.trim_end(),
-            runner::RunMode::Passthrough,
-            runner::RunOptions::default(),
-        );
-    }
-
     match cmd {
         PrismaCommand::Generate => run_generate(args, verbose),
         PrismaCommand::Migrate { subcommand } => run_migrate(subcommand, args, verbose),
@@ -495,56 +446,6 @@ fn extract_index_name(line: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The unfiltered path rebuilds the subcommand words the run_* handlers push onto the
-    /// child command, so a wrong spelling here would send the caller a different page.
-    #[test]
-    fn prisma_argv_round_trips_every_subcommand() {
-        assert_eq!(PrismaCommand::Generate.prisma_argv(), ["generate"]);
-        assert_eq!(PrismaCommand::DbPush.prisma_argv(), ["db", "push"]);
-        assert_eq!(
-            PrismaCommand::Migrate {
-                subcommand: MigrateSubcommand::Status
-            }
-            .prisma_argv(),
-            ["migrate", "status"]
-        );
-        assert_eq!(
-            PrismaCommand::Migrate {
-                subcommand: MigrateSubcommand::Deploy
-            }
-            .prisma_argv(),
-            ["migrate", "deploy"]
-        );
-        assert_eq!(
-            PrismaCommand::Migrate {
-                subcommand: MigrateSubcommand::Dev { name: None }
-            }
-            .prisma_argv(),
-            ["migrate", "dev"]
-        );
-        // `--name` is a clap argument, not part of `args`, so it has to be replayed here.
-        assert_eq!(
-            PrismaCommand::Migrate {
-                subcommand: MigrateSubcommand::Dev {
-                    name: Some("add_users".to_string())
-                }
-            }
-            .prisma_argv(),
-            ["migrate", "dev", "--name", "add_users"]
-        );
-    }
-
-    /// Every filter here reads a migration report, and a manual page is not one.
-    #[test]
-    fn help_request_is_recognised_in_prisma_args() {
-        let asks = |a: &[&str]| {
-            args_utils::asks_tool_for_help(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>())
-        };
-        assert!(asks(&["--help"]));
-        assert!(asks(&["--version"]));
-        assert!(!asks(&["--skip-generate"]));
-    }
 
     #[test]
     fn test_filter_generate() {

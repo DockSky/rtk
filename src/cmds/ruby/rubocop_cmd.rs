@@ -5,7 +5,6 @@
 //! when the user specifies a custom format, or when injected JSON output fails
 //! to parse.
 
-use crate::core::args_utils;
 use crate::core::runner;
 use crate::core::utils::ruby_exec;
 use anyhow::Result;
@@ -53,20 +52,6 @@ struct RubocopSummary {
 
 pub fn run(args: &[String], verbose: u8) -> Result<i32> {
     let mut cmd = ruby_exec("rubocop");
-
-    // `rubocop --help` names no format, so RTK would append `--format json` and then run the
-    // usage page through `filter_rubocop_json`, whose parse-failure path prints a five-line
-    // tail and drops the rest (#4198). Reuse the `ruby_exec` child so `bundle exec` holds.
-    if args_utils::asks_tool_for_help(args) {
-        cmd.args(args);
-        return runner::run(
-            cmd,
-            "rubocop",
-            &args.join(" "),
-            runner::RunMode::Passthrough,
-            runner::RunOptions::default(),
-        );
-    }
 
     let is_autocorrect = args
         .iter()
@@ -649,15 +634,5 @@ mod tests {
             "should show +2 more files overflow: {}",
             result
         );
-    }
-
-    /// #4198: `rubocop --help` names no format, so the usage page reached `filter_rubocop_json`.
-    #[test]
-    fn test_help_request_bypasses_rubocop_filter() {
-        let help: Vec<String> = ["--help"].iter().map(|s| s.to_string()).collect();
-        assert!(args_utils::asks_tool_for_help(&help));
-
-        let normal: Vec<String> = ["app/"].iter().map(|s| s.to_string()).collect();
-        assert!(!args_utils::asks_tool_for_help(&normal));
     }
 }

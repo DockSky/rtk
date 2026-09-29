@@ -1,7 +1,5 @@
 //! Filters Playwright E2E test output to show only failures.
 
-use crate::core::args_utils;
-use crate::core::runner;
 use crate::core::stream::exec_capture;
 use crate::core::tracking;
 use crate::core::utils::{detect_package_manager, resolved_command, strip_ansi};
@@ -261,21 +259,6 @@ pub fn run(args: &[String], verbose: u8) -> Result<i32> {
         }
     };
 
-    // No parsing tier reads a manual page: JSON fails, the regex tier finds no counts, and
-    // the passthrough tier truncates at `passthrough_max_chars` (2000) after announcing the
-    // failure on stderr. `playwright test --help` would also be run with an injected
-    // `--reporter=json` the caller never asked for (#4198).
-    if args_utils::asks_tool_for_help(args) {
-        cmd.args(args);
-        return runner::run(
-            cmd,
-            "playwright",
-            &args.join(" "),
-            runner::RunMode::Passthrough,
-            runner::RunOptions::default(),
-        );
-    }
-
     // Only inject --reporter=json for `playwright test` runs
     let is_test = args.first().map(|a| a == "test").unwrap_or(false);
     if is_test {
@@ -346,18 +329,6 @@ pub fn run(args: &[String], verbose: u8) -> Result<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// No parsing tier reads a manual page: the last one truncates it at
-    /// `passthrough_max_chars` after announcing the failure on stderr.
-    #[test]
-    fn help_request_is_recognised_in_playwright_args() {
-        let asks = |a: &[&str]| {
-            args_utils::asks_tool_for_help(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>())
-        };
-        assert!(asks(&["--help"]));
-        assert!(asks(&["test", "--help"]));
-        assert!(!asks(&["test", "--project=chromium"]));
-    }
 
     #[test]
     fn test_playwright_parser_json() {

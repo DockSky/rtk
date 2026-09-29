@@ -5,7 +5,6 @@
 //! specifies a custom format or when injected JSON output fails to parse.
 
 use super::utils::php_tool_command;
-use crate::core::args_utils;
 use crate::core::runner;
 use crate::core::utils::exit_code_from_status;
 use anyhow::{Context, Result};
@@ -55,12 +54,7 @@ pub fn run(args: &[String], verbose: u8) -> Result<i32> {
 
     // Utility commands (--version, list, clear-result-cache, worker, …): real passthrough.
     // Only analyse/analyze subcommands get filtered and token-tracked.
-    //
-    // `phpstan analyse --help` joins them: the injected `--error-format json` makes the
-    // manual page unparseable and filter_phpstan_json prints "PHPStan: No output" over it
-    // (#4198). Bare `phpstan --help` already landed here; this puts the subcommand's own
-    // page on the same footing.
-    let is_analyse = is_analyse_command(args) && !args_utils::asks_tool_for_help(args);
+    let is_analyse = is_analyse_command(args);
 
     if !is_analyse {
         if verbose > 0 {
@@ -278,21 +272,6 @@ fn compact_php_path(path: &str) -> String {
 mod tests {
     use super::*;
     use crate::core::utils::count_tokens;
-
-    /// Bare `phpstan --help` already took the passthrough branch; `phpstan analyse --help`
-    /// did not, and the injected `--error-format json` left filter_phpstan_json printing
-    /// "PHPStan: No output" over the page. Both must now read as non-analyse.
-    #[test]
-    fn analyse_with_help_request_is_not_treated_as_an_analysis() {
-        let filtered = |a: &[&str]| {
-            let a = args(a);
-            is_analyse_command(&a) && !args_utils::asks_tool_for_help(&a)
-        };
-        assert!(filtered(&["analyse", "src"]));
-        assert!(!filtered(&["analyse", "--help"]));
-        assert!(!filtered(&["-c", "phpstan.neon", "analyse", "--help"]));
-        assert!(!filtered(&["--help"]));
-    }
 
     fn no_errors_json() -> &'static str {
         r#"{

@@ -11,7 +11,6 @@
 //! - Pipeline: `head_pipeline.status` (not `statusCheckRollup`)
 
 use super::git_cmd;
-use crate::core::args_utils;
 use crate::core::runner::{self, RunOptions};
 use crate::core::truncate::{CAP_LIST, CAP_WARNINGS};
 use crate::core::utils::{ok_confirmation, resolved_command, strip_ansi, truncate};
@@ -261,12 +260,6 @@ where
 
 /// Run a glab command with token-optimized output.
 pub fn run(subcommand: &str, args: &[String], verbose: u8, ultra_compact: bool) -> Result<i32> {
-    // RTK adds `-F json`, so a usage page reaches the formatter as the JSON it expected:
-    // `glab mr diff --help` printed 1 byte against glab's 1157 (#4198).
-    if args_utils::asks_tool_for_help(args) {
-        return run_passthrough("glab", subcommand, args);
-    }
-
     // If the user explicitly requests a specific output format, passthrough unchanged.
     if has_output_flag(args) {
         return run_passthrough("glab", subcommand, args);
@@ -1617,18 +1610,5 @@ mod tests {
         assert!(!output.contains('❌'));
         assert!(!output.contains('✓'));
         assert!(!output.contains('✗'));
-    }
-
-    /// #4198: Measured: `rtk glab mr diff --help` printed 1 byte against glab's 1157.
-    #[test]
-    fn test_help_request_bypasses_glab_filter() {
-        let help: Vec<String> = ["mr", "diff", "--help"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        assert!(args_utils::asks_tool_for_help(&help));
-
-        let normal: Vec<String> = ["mr", "diff", "42"].iter().map(|s| s.to_string()).collect();
-        assert!(!args_utils::asks_tool_for_help(&normal));
     }
 }

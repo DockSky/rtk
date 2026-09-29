@@ -1,38 +1,6 @@
 //! Utility functions for argument handling, particularly for restoring "--" escape
 //! arguments that clap consumes during parsing.
 
-use crate::core::arg_tokenizer::{self, TokenKind};
-
-/// True when these arguments ask the wrapped tool for its own help or version banner.
-///
-/// A filter that summarises finds no diagnostics in a usage page and prints its empty
-/// summary instead, so `cargo test --help` returned nothing (#4198). A wrapper that sees
-/// this returns true runs the tool unfiltered.
-///
-/// Scoped before `--`, since past the boundary it is an operand: `rtk grep -- --help`
-/// searches *for* that string. The tokenizer is structural, so a value that happens to be
-/// `--help` reads as a request; that costs one unfiltered run, the reverse eats a man page.
-pub fn asks_tool_for_help(args: &[String]) -> bool {
-    asks_for_help(args, true)
-}
-
-/// Same, for a tool that defines `-h` as its own flag: `ls -h` and `tree -h` are
-/// `--human-readable`. (`grep -h` is `--no-filename`; `search.rs` reads it per engine.)
-pub fn asks_tool_for_help_long_only(args: &[String]) -> bool {
-    asks_for_help(args, false)
-}
-
-fn asks_for_help(args: &[String], short_h_is_help: bool) -> bool {
-    let tokens = arg_tokenizer::tokenize(args);
-    arg_tokenizer::before_dashdash(&tokens)
-        .iter()
-        .any(|t| match t.kind {
-            TokenKind::Long => matches!(t.text, "help" | "version"),
-            TokenKind::Short => short_h_is_help && t.text == "h",
-            _ => false,
-        })
-}
-
 /// Restores `--` tokens that clap consumed when using `trailing_var_arg = true`.
 ///
 /// Returns `parsed_args` unchanged when `raw_args` has the same or fewer `--` tokens
@@ -76,59 +44,6 @@ pub fn restore_double_dash_with_raw(parsed_args: &[String], raw_args: &[String])
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ============ asks_tool_for_help ============
-
-    fn asks(args: &[&str]) -> bool {
-        let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
-        asks_tool_for_help(&args)
-    }
-
-    #[test]
-    fn long_help_and_version_are_requests() {
-        assert!(asks(&["--help"]));
-        assert!(asks(&["--version"]));
-        assert!(asks(&["log", "--help"]));
-        assert!(asks(&["test", "--no-run", "--help"]));
-    }
-
-    #[test]
-    fn short_h_is_help_for_most_tools_but_not_for_ls_and_tree() {
-        // `cargo build -h` is a usage page the build filter would report as "0 crates
-        // compiled"; `ls -h` and `tree -h` are --human-readable and must stay filtered.
-        assert!(asks(&["build", "-h"]));
-        assert!(asks(&["-ih"]), "and inside a cluster");
-        let long_only = |a: &[&str]| {
-            asks_tool_for_help_long_only(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>())
-        };
-        assert!(!long_only(&["-h", "src/"]));
-        assert!(!long_only(&["-lh"]));
-        assert!(long_only(&["--help"]));
-    }
-
-    #[test]
-    fn short_forms_are_left_to_the_filter_that_knows_the_tool() {
-        // `-V` is --version for cargo but --verbose for ctest, so it is never read here.
-        // `-h` is --no-filename for grep, which search.rs resolves per engine.
-        assert!(!asks(&["-V"]));
-        assert!(!asks(&["-v"]));
-    }
-
-    #[test]
-    fn past_the_boundary_it_is_an_operand() {
-        // `rtk grep -- --help f.txt` searches *for* the string "--help".
-        assert!(!asks(&["--", "--help", "f.txt"]));
-        assert!(!asks(&["--", "--version"]));
-        assert!(asks(&["--help", "--", "f.txt"]));
-    }
-
-    #[test]
-    fn an_ordinary_invocation_is_not_a_request() {
-        assert!(!asks(&[]));
-        assert!(!asks(&["log", "-5", "--oneline"]));
-        assert!(!asks(&["build", "--release"]));
-        assert!(!asks(&["--helper"]), "prefix of --help is not --help");
-    }
 
     fn restore_with_raw(parsed: &[&str], raw: &[&str]) -> Vec<String> {
         let parsed: Vec<String> = parsed.iter().map(|s| s.to_string()).collect();

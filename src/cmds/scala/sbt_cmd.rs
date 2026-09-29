@@ -1,4 +1,3 @@
-use crate::core::args_utils;
 use crate::core::runner::{self, RunOptions};
 use crate::core::utils::{resolved_command, truncate};
 use anyhow::Result;
@@ -82,22 +81,12 @@ fn run_task(
     tee_label: &str,
     verbose: u8,
 ) -> Result<i32> {
+    let mut cmd = resolved_command("sbt");
+
     let (sbt_task, rest) = match args.first() {
         Some(a) if is_scoped_task(a) => (a.as_str(), &args[1..]),
         _ => (default_task, args),
     };
-
-    // sbt answers `--help` with its own launcher usage, which carries no ScalaTest summary
-    // line: `filter_sbt_test` then emits its "no tests" one-liner and `filter_sbt_compile`
-    // keeps only `[error]`/`[warn]` lines, i.e. nothing (#4198). Forward the same argv the
-    // filtered path would have run, so the scope prefix the caller typed is preserved.
-    if args_utils::asks_tool_for_help(rest) {
-        let mut os_args: Vec<OsString> = vec![OsString::from(sbt_task)];
-        os_args.extend(rest.iter().map(OsString::from));
-        return runner::run_passthrough("sbt", &os_args, verbose);
-    }
-
-    let mut cmd = resolved_command("sbt");
     cmd.arg(sbt_task);
     for arg in rest {
         cmd.arg(arg);
@@ -140,17 +129,6 @@ pub fn run_other(args: &[OsString], verbose: u8) -> Result<i32> {
     }
 
     let subcommand = args[0].to_string_lossy().into_owned();
-
-    // `sbt testOnly --help` reaches the ScalaTest branch below, where the usage page has no
-    // summary line to parse and `filter_sbt_test` reduces it to "no tests" (#4198). The
-    // unfiltered tail of this function is already the right behaviour for it.
-    let as_strings: Vec<String> = args
-        .iter()
-        .map(|a| a.to_string_lossy().into_owned())
-        .collect();
-    if args_utils::asks_tool_for_help(&as_strings) {
-        return runner::run_passthrough("sbt", args, verbose);
-    }
 
     // Integration test commands (it:test, IntegrationTest/test, etc.) produce standard
     // ScalaTest output — filter them like `sbt test`, through the shared runner so the
@@ -863,18 +841,5 @@ mod tests {
     #[test]
     fn test_filter_sbt_run_empty_input() {
         assert!(filter_sbt_run("").is_empty());
-    }
-
-    /// #4198: sbt's launcher usage carries no ScalaTest summary, so `filter_sbt_test` reported no tests.
-    #[test]
-    fn test_help_request_bypasses_sbt_filter() {
-        let help: Vec<String> = ["--help"].iter().map(|s| s.to_string()).collect();
-        assert!(args_utils::asks_tool_for_help(&help));
-
-        let normal: Vec<String> = ["-Dsbt.log.noformat=true"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        assert!(!args_utils::asks_tool_for_help(&normal));
     }
 }

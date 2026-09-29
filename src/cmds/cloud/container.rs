@@ -1,6 +1,5 @@
 //! Filters Docker and kubectl output into compact summaries.
 
-use crate::core::args_utils;
 use crate::core::guard::never_worse;
 use crate::core::runner::{self, RunOptions};
 use crate::core::stream::exec_capture;
@@ -33,22 +32,6 @@ pub fn run(cmd: ContainerCmd, args: &[String], verbose: u8) -> Result<i32> {
         ContainerCmd::KubectlServices => k8s_services("kubectl", args, verbose),
         ContainerCmd::KubectlLogs => k8s_logs("kubectl", args, verbose),
     }
-}
-
-/// Hands the cluster CLI its own `<subcommand> ...` invocation, unfiltered.
-///
-/// RTK appends `-o json`, so a usage page reaches `run_k8s_json` as a decode failure and is
-/// only reprinted by accident (#4198). `subcommand` carries the words RTK adds on the
-/// caller's behalf, so the child sees the command it would have run either way.
-fn run_help_unfiltered(
-    tool: &str,
-    subcommand: &[&str],
-    args: &[String],
-    verbose: u8,
-) -> Result<i32> {
-    let mut os_args: Vec<OsString> = subcommand.iter().map(OsString::from).collect();
-    os_args.extend(args.iter().map(OsString::from));
-    runner::run_passthrough(tool, &os_args, verbose)
 }
 
 fn run_k8s_json<F>(cmd: Command, tool: &str, label: &str, filter_fn: F) -> Result<i32>
@@ -378,11 +361,7 @@ fn docker_logs(args: &[String], _verbose: u8) -> Result<i32> {
     )
 }
 
-pub fn k8s_pods(tool: &str, args: &[String], verbose: u8) -> Result<i32> {
-    if args_utils::asks_tool_for_help(args) {
-        return run_help_unfiltered(tool, &["get", "pods"], args, verbose);
-    }
-
+pub fn k8s_pods(tool: &str, args: &[String], _verbose: u8) -> Result<i32> {
     let mut cmd = resolved_command(tool);
     cmd.args(["get", "pods", "-o", "json"]);
     for arg in args {
@@ -470,11 +449,7 @@ fn format_kubectl_pods(json: &Value) -> String {
     out
 }
 
-pub fn k8s_services(tool: &str, args: &[String], verbose: u8) -> Result<i32> {
-    if args_utils::asks_tool_for_help(args) {
-        return run_help_unfiltered(tool, &["get", "services"], args, verbose);
-    }
-
+pub fn k8s_services(tool: &str, args: &[String], _verbose: u8) -> Result<i32> {
     let mut cmd = resolved_command(tool);
     cmd.args(["get", "services", "-o", "json"]);
     for arg in args {
@@ -540,13 +515,7 @@ fn format_kubectl_services(json: &Value) -> String {
     out
 }
 
-pub fn k8s_logs(tool: &str, args: &[String], verbose: u8) -> Result<i32> {
-    // Without this the flag is read as the pod name: RTK runs `logs --tail 100 --help` and
-    // labels the usage page "Logs for --help:" (#4198).
-    if args_utils::asks_tool_for_help(args) {
-        return run_help_unfiltered(tool, &["logs"], args, verbose);
-    }
-
+pub fn k8s_logs(tool: &str, args: &[String], _verbose: u8) -> Result<i32> {
     let pod = args.first().map(|s| s.as_str()).unwrap_or("");
     if pod.is_empty() {
         println!("Usage: rtk {} logs <pod>", tool);
@@ -1093,19 +1062,5 @@ api-1  | Connected to database";
             "Expected >=60% savings, got {:.1}%",
             savings
         );
-    }
-
-    /// #4198: `kubectl get pods --help` had `-o json` appended and its usage page fed to a
-    /// JSON decoder; `kubectl logs --help` read the flag as the pod name.
-    #[test]
-    fn test_help_request_bypasses_kubectl_filter() {
-        let help: Vec<String> = ["--help"].iter().map(|s| s.to_string()).collect();
-        assert!(args_utils::asks_tool_for_help(&help));
-
-        let normal: Vec<String> = ["-n", "kube-system"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        assert!(!args_utils::asks_tool_for_help(&normal));
     }
 }

@@ -37,8 +37,9 @@ pub fn run_restore(args: &[String], verbose: u8) -> Result<i32> {
 
 pub fn run_format(args: &[String], verbose: u8) -> Result<i32> {
     let args = &args_utils::restore_double_dash(args);
-    if args_utils::asks_tool_for_help(args) {
-        return run_help_unfiltered("format", args, verbose);
+    // Same as the binlog path, through the report-JSON reader instead (#4198).
+    if crate::core::runner::requests_help_args("dotnet", args) {
+        return run_passthrough(&forwarded_dotnet_args("format", args), verbose);
     }
     let tokens = tokenize_dotnet_args(args);
     let timer = tracking::TimedExecution::start();
@@ -79,6 +80,14 @@ pub fn run_format(args: &[String], verbose: u8) -> Result<i32> {
     Ok(result.exit_code)
 }
 
+/// Rebuilds the argv `run_passthrough` expects: the subcommand RTK routed on, then the
+/// caller's own arguments.
+fn forwarded_dotnet_args(subcommand: &str, args: &[String]) -> Vec<OsString> {
+    let mut out = vec![OsString::from(subcommand)];
+    out.extend(args.iter().map(OsString::from));
+    out
+}
+
 pub fn run_passthrough(args: &[OsString], verbose: u8) -> Result<i32> {
     if args.is_empty() {
         anyhow::bail!("dotnet: no subcommand specified");
@@ -116,21 +125,12 @@ pub fn run_passthrough(args: &[OsString], verbose: u8) -> Result<i32> {
     Ok(result.exit_code)
 }
 
-/// Runs `dotnet <subcommand> ...` unfiltered, for output that is documentation rather than
-/// a build or test log.
-///
-/// Otherwise `--help` gets an injected `-bl:<tmp>.binlog` and the usage page is read as an
-/// MSBuild log: no errors, no warnings, so the summariser prints "build succeeded" (#4198).
-fn run_help_unfiltered(subcommand: &str, args: &[String], verbose: u8) -> Result<i32> {
-    let mut os_args: Vec<OsString> = vec![OsString::from(subcommand)];
-    os_args.extend(args.iter().map(OsString::from));
-    run_passthrough(&os_args, verbose)
-}
-
 fn run_dotnet_with_binlog(subcommand: &str, args: &[String], verbose: u8) -> Result<i32> {
     let args = &args_utils::restore_double_dash(args);
-    if args_utils::asks_tool_for_help(args) {
-        return run_help_unfiltered(subcommand, args, verbose);
+    // Otherwise `--help` gets an injected `-bl:<tmp>.binlog` and the usage page is read as
+    // an MSBuild log: no errors, no warnings, so the summariser prints "succeeded" (#4198).
+    if crate::core::runner::requests_help_args("dotnet", args) {
+        return run_passthrough(&forwarded_dotnet_args(subcommand, args), verbose);
     }
     let tokens = tokenize_dotnet_args(args);
     let timer = tracking::TimedExecution::start();
@@ -3354,18 +3354,5 @@ mod tests {
         cleanup_temp_file(&missing_file);
 
         assert!(!missing_file.exists());
-    }
-
-    /// #4198: `dotnet build --help` got an injected binlog and its usage page read as an MSBuild log.
-    #[test]
-    fn test_help_request_bypasses_dotnet_filter() {
-        let help: Vec<String> = ["--help"].iter().map(|s| s.to_string()).collect();
-        assert!(args_utils::asks_tool_for_help(&help));
-
-        let normal: Vec<String> = ["--configuration", "Release"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        assert!(!args_utils::asks_tool_for_help(&normal));
     }
 }

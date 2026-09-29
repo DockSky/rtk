@@ -126,14 +126,6 @@ impl Invocation {
 }
 
 pub fn run(args: &[String], verbose: u8) -> Result<i32> {
-    // `sqlfluff lint --help` is planned as a lint run, so `--format json` is appended and
-    // render_lint_json reports a parse failure over the page; the non-lint arm truncates it
-    // at 2000 characters instead (#4198). Neither reading applies to a manual page.
-    if crate::core::args_utils::asks_tool_for_help(args) {
-        let os_args: Vec<std::ffi::OsString> = args.iter().map(Into::into).collect();
-        return runner::run_passthrough("sqlfluff", &os_args, verbose);
-    }
-
     let plan = plan(args);
 
     let mut cmd = resolved_command("sqlfluff");
@@ -425,20 +417,6 @@ fn compact_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// `sqlfluff lint --help` was planned as a lint run, so `--format json` was appended and
-    /// render_lint_json reported a parse failure over the page.
-    #[test]
-    fn help_request_is_recognised_in_sqlfluff_args() {
-        let asks = |a: &[&str]| {
-            crate::core::args_utils::asks_tool_for_help(
-                &a.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
-            )
-        };
-        assert!(asks(&["--help"]));
-        assert!(asks(&["lint", "--help"]));
-        assert!(!asks(&["lint", "models/"]));
-    }
 
     fn count_tokens(text: &str) -> usize {
         text.split_whitespace().count()

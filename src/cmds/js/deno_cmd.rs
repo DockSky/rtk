@@ -78,13 +78,7 @@ pub fn run_compile(args: &[String], verbose: u8) -> Result<i32> {
 
 /// Run `deno test` showing only failures. Args are passed as a vector, never via a shell.
 pub fn run_test(args: &[String], verbose: u8) -> Result<i32> {
-    // `--help` joins the two conditions below for the same reason they are there: the
-    // failures-only summary has nothing to say about output that is not a test run, and it
-    // showed 639 bytes of deno's 13870-byte manual page (#4198).
-    if crate::core::runner::is_watch_mode(args)
-        || chose_output_format(args)
-        || crate::core::args_utils::asks_tool_for_help(args)
-    {
+    if crate::core::runner::is_watch_mode(args) || chose_output_format(args) {
         return passthrough_subcmd("test", args, verbose);
     }
 
@@ -109,20 +103,6 @@ pub fn run_passthrough(args: &[OsString], verbose: u8) -> Result<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// `deno test --help` carries no test results, so the failures-only summary reported an
-    /// empty run; it joins watch mode and a caller-chosen reporter on the unfiltered path.
-    #[test]
-    fn help_request_is_recognised_in_deno_test_args() {
-        let asks = |a: &[&str]| {
-            crate::core::args_utils::asks_tool_for_help(
-                &a.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
-            )
-        };
-        assert!(asks(&["--help"]));
-        assert!(asks(&["--version"]));
-        assert!(!asks(&["--allow-net", "tests/"]));
-    }
 
     #[test]
     fn test_filter_deno_output_savings_on_real_output() {

@@ -4,7 +4,6 @@
 //! `rails test`, filtering down to failures/errors and the summary line.
 //! Uses `ruby_exec("rake")` to auto-detect `bundle exec`.
 
-use crate::core::args_utils;
 use crate::core::runner;
 use crate::core::truncate::CAP_WARNINGS;
 use crate::core::utils::{ruby_exec, strip_ansi};
@@ -56,20 +55,6 @@ pub fn run(args: &[String], verbose: u8) -> Result<i32> {
     let mut cmd = ruby_exec(tool);
     for arg in &effective_args {
         cmd.arg(arg);
-    }
-
-    // Measured against rake 13: `rake --help` prints 3057 bytes of usage and RTK printed 24 —
-    // the Minitest state machine never leaves `Header` on a page with no "# Running:" marker,
-    // so every filter branch collapses to "rake test: no tests ran" (#4198). Run the child
-    // built above rather than a bare `rake`, so the Gemfile's `bundle exec` still applies.
-    if args_utils::asks_tool_for_help(args) {
-        return runner::run(
-            cmd,
-            "rake",
-            &args.join(" "),
-            runner::RunMode::Passthrough,
-            runner::RunOptions::default(),
-        );
     }
 
     if verbose > 0 {
@@ -544,15 +529,5 @@ NoMethodError: undefined method `blah'
         assert!(looks_like_test_path("my_file.rb"));
         assert!(!looks_like_test_path("--verbose"));
         assert!(!looks_like_test_path("12345"));
-    }
-
-    /// #4198: Measured: rake printed 3057 bytes of usage and RTK showed 24 ("rake test: no tests ran").
-    #[test]
-    fn test_help_request_bypasses_rake_filter() {
-        let help: Vec<String> = ["--help"].iter().map(|s| s.to_string()).collect();
-        assert!(args_utils::asks_tool_for_help(&help));
-
-        let normal: Vec<String> = ["test"].iter().map(|s| s.to_string()).collect();
-        assert!(!args_utils::asks_tool_for_help(&normal));
     }
 }

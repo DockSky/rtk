@@ -7,11 +7,9 @@
 //! unless -a flag is present (respecting user intent).
 
 use super::constants::NOISE_DIRS;
-use crate::core::args_utils;
 use crate::core::runner::{self, RunOptions};
 use crate::core::utils::{ChildArgExt, resolved_command, tool_exists};
 use anyhow::Result;
-use std::ffi::OsString;
 
 pub fn run(args: &[String], verbose: u8) -> Result<i32> {
     if !tool_exists("tree") {
@@ -22,15 +20,6 @@ pub fn run(args: &[String], verbose: u8) -> Result<i32> {
              - Fedora/RHEL: sudo dnf install tree\n\
              - Arch: sudo pacman -S tree"
         );
-    }
-
-    // Measured against tree 2.2: `rtk tree --help` printed 4559 bytes against the tool's
-    // 4751, silently dropping the --noreport, --dirsfirst and --filesfirst entries — the
-    // usage page runs through `filter_tree_output`, which was written for a directory
-    // listing and treats those lines as noise (#4198).
-    if args_utils::asks_tool_for_help_long_only(args) {
-        let os_args: Vec<OsString> = args.iter().map(OsString::from).collect();
-        return runner::run_passthrough("tree", &os_args, verbose);
     }
 
     let mut cmd = resolved_command("tree");
@@ -174,15 +163,5 @@ mod tests {
         assert!(NOISE_DIRS.contains(&".next"));
         assert!(NOISE_DIRS.contains(&"dist"));
         assert!(NOISE_DIRS.contains(&"build"));
-    }
-
-    /// #4198: Measured: `rtk tree --help` printed 4559 bytes against the tool's 4751.
-    #[test]
-    fn test_help_request_bypasses_tree_filter() {
-        let help: Vec<String> = ["--help"].iter().map(|s| s.to_string()).collect();
-        assert!(args_utils::asks_tool_for_help_long_only(&help));
-
-        let normal: Vec<String> = ["-L", "2"].iter().map(|s| s.to_string()).collect();
-        assert!(!args_utils::asks_tool_for_help_long_only(&normal));
     }
 }

@@ -1,6 +1,5 @@
 //! Filters pytest output to show only failures and the summary line.
 
-use crate::core::args_utils;
 use crate::core::config;
 use crate::core::runner;
 use crate::core::truncate::CAP_WARNINGS;
@@ -26,21 +25,6 @@ pub fn run(args: &[String], verbose: u8) -> Result<i32> {
         c.arg("-m").arg("pytest");
         c
     };
-
-    // The injected `--tb=short -q -rxX` shape the report filter_pytest_output expects, and
-    // a manual page is not one: it collects no test files and no summary line, so the page
-    // becomes "Pytest: No tests collected". pytest exits 0 on `--help`, so the non-zero
-    // escape hatch below never fires either (#4198).
-    if args_utils::asks_tool_for_help(args) {
-        cmd.args(args);
-        return runner::run(
-            cmd,
-            "pytest",
-            &args.join(" "),
-            runner::RunMode::Passthrough,
-            runner::RunOptions::default(),
-        );
-    }
 
     let has_tb_flag = args.iter().any(|a| a.starts_with("--tb"));
     let has_quiet_flag = args.iter().any(|a| a == "-q" || a == "--quiet");
@@ -370,18 +354,6 @@ fn parse_duration(summary: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The injected `--tb=short -q -rxX` shape a report, and a manual page is not one: the
-    /// page became "Pytest: No tests collected".
-    #[test]
-    fn help_request_is_recognised_in_pytest_args() {
-        let asks = |a: &[&str]| {
-            args_utils::asks_tool_for_help(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>())
-        };
-        assert!(asks(&["--help"]));
-        assert!(asks(&["--version"]));
-        assert!(!asks(&["-k", "auth", "tests/"]));
-    }
 
     #[test]
     fn test_filter_pytest_all_pass() {
