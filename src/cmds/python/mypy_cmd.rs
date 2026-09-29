@@ -1,5 +1,6 @@
 //! Filters mypy type-checking output, grouping errors by file.
 
+use crate::core::args_utils;
 use crate::core::runner;
 use crate::core::utils::{resolved_command, strip_ansi, tool_exists, truncate};
 use anyhow::Result;
@@ -22,6 +23,19 @@ pub fn run(args: &[String], verbose: u8) -> Result<i32> {
 
     if verbose > 0 {
         eprintln!("Running: mypy {}", args.join(" "));
+    }
+
+    // filter_mypy_output recognises `file.py:12: error: ...` lines and nothing else, and
+    // mypy exits 0 on `--help`, so the escape hatch below it never fires: the page is
+    // replaced by "mypy: No issues found" (#4198).
+    if args_utils::asks_tool_for_help(args) {
+        return runner::run(
+            cmd,
+            "mypy",
+            &args.join(" "),
+            runner::RunMode::Passthrough,
+            runner::RunOptions::default(),
+        );
     }
 
     runner::run_filtered_with_exit(
@@ -224,6 +238,18 @@ pub fn filter_mypy_output(output: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// mypy exits 0 on `--help`, so the non-zero escape hatch never fired and the page was
+    /// replaced by "mypy: No issues found".
+    #[test]
+    fn help_request_is_recognised_in_mypy_args() {
+        let asks = |a: &[&str]| {
+            args_utils::asks_tool_for_help(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+        };
+        assert!(asks(&["--help"]));
+        assert!(asks(&["--version"]));
+        assert!(!asks(&["--strict", "src"]));
+    }
 
     #[test]
     fn test_filter_mypy_errors_grouped_by_file() {

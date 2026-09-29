@@ -8,6 +8,7 @@
 //! This filter keeps the environment header, the aggregate counts, and a bounded
 //! number of failure diffs; it drops the per-test PASS/SKIP lines entirely.
 
+use crate::core::args_utils;
 use crate::core::runner;
 use crate::core::utils::{resolved_command, strip_ansi};
 use anyhow::Result;
@@ -99,6 +100,23 @@ fn args_already_show_diff(args: &[String]) -> bool {
 }
 
 pub fn run(args: &[String], verbose: u8) -> Result<i32> {
+    // The filter keeps the run's aggregate counts and its failure diffs, and a manual page
+    // has neither, so filter_phpt_output drops it (#4198). `--show-diff` is not injected
+    // here: it asks run-tests.php to change what it prints, which is meaningless for a
+    // page and would only be another flag the caller never typed.
+    if args_utils::asks_tool_for_help(args) {
+        let mut cmd = resolved_command("php");
+        cmd.arg("run-tests.php");
+        cmd.args(args);
+        return runner::run(
+            cmd,
+            "phpt",
+            &args.join(" "),
+            runner::RunMode::Passthrough,
+            runner::RunOptions::default(),
+        );
+    }
+
     let mut cmd = resolved_command("php");
     cmd.arg("run-tests.php");
     // The diff is what makes a failure actionable, and the filter caps it at
@@ -398,6 +416,17 @@ fn build_summary(p: &Parsed) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The filter keeps the run's aggregate counts and its failure diffs, and a manual page
+    /// has neither.
+    #[test]
+    fn help_request_is_recognised_in_phpt_args() {
+        let asks = |a: &[&str]| {
+            args_utils::asks_tool_for_help(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+        };
+        assert!(asks(&["--help"]));
+        assert!(!asks(&["-j8", "ext/standard/tests"]));
+    }
 
     #[test]
     fn test_show_diff_injection_ignores_unrelated_show_flags() {

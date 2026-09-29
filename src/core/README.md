@@ -186,6 +186,15 @@ For truncation recovery on **success** (e.g. a list capped at 20 items), use `te
 
 The agent runs `rtk recall <hash>` to get back exactly what was elided. For `force_tee_tail_hint`, `offset` is the 1-based first hidden line (`header_lines + MAX_CAP + 1`); it is stored so the default recall returns only the hidden tail. Storage is byte-faithful (`BLOB` + lossless gzip); tune limits via the `[retriever]` config section.
 
+### The wrapped tool's own help (`args_utils::asks_tool_for_help`)
+
+RTK never answers `-h`, `--help`, `-V`, `--version` or `help` on behalf of a tool it wraps. Two layers keep that true, because the token can be lost twice over:
+
+1. **Parsing** — clap mints those flags for every subcommand it builds, which silently captured `grep -h` (`--no-filename`), `ls -h` and `tree -h` (`--human-readable`), and `git help log`. `release_meta_flags` in `main.rs` strips them from every subcommand that forwards to a native tool, detected structurally from `trailing_var_arg` / `external_subcommand` rather than from a list — the hand-kept version of that list had reached two entries out of ~138 wrappers. RTK's own usage stays reachable at `rtk help <cmd>`, on the root, where no wrapped tool's flags can shadow it.
+2. **Filtering** — a filter that summarises finds no diagnostics in a help page and reports its empty summary, which is how `rtk cargo build --help` became `cargo build (0 crates compiled)` and `rtk git log --help` became nothing at all. Such a filter calls `args_utils::asks_tool_for_help()` at its entry point and delegates to `runner::run_passthrough()`.
+
+`asks_tool_for_help` reads only the long spellings, scoped before `--`. The short forms are per-tool and are left to the filter that knows its own grammar: `-h` is `--help` for rg but `--no-filename` for grep, `-V` is `--version` for cargo but `--verbose` for ctest. `src/cmds/system/search.rs` shows the engine-aware form built on top of it.
+
 ### Truncation Caps (`truncate`)
 
 `src/core/truncate.rs` defines four global cap policies — `CAP_ERRORS`, `CAP_WARNINGS`, `CAP_LIST`, `CAP_INVENTORY` — for the data classes RTK filters truncate. Each filter binds the right CAP to a local `const MAX_*` so the cap is one named jump away from the call site. These CAPs are the staging point for filter-level cap configuration (planned, not yet implemented): once the config surface lands, overriding `CAP_LIST` in `~/.config/rtk/config.toml` will tune every list filter in one place instead of editing 20+ files.

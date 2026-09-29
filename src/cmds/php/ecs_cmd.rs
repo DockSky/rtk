@@ -1,6 +1,7 @@
 //! EasyCodingStandard output filter.
 
 use super::utils::{php_tool_command, strip_ansi_and_controls};
+use crate::core::args_utils;
 use crate::core::runner;
 use anyhow::Result;
 
@@ -12,6 +13,19 @@ pub fn run(args: &[String], verbose: u8) -> Result<i32> {
 
     if verbose > 0 {
         eprintln!("Running: ecs {}", args.join(" "));
+    }
+
+    // filter_ecs_output keeps only lines that look like a violation report -- a path, an
+    // ERROR/FAIL marker, a "N files checked" tally. A manual page matches a few of those
+    // words by accident and loses every line that does not (#4198).
+    if args_utils::asks_tool_for_help(args) {
+        return runner::run(
+            cmd,
+            "ecs",
+            &args.join(" "),
+            runner::RunMode::Passthrough,
+            runner::RunOptions::default(),
+        );
     }
 
     runner::run_filtered(
@@ -62,6 +76,18 @@ pub(crate) fn filter_ecs_output(output: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// filter_ecs_output keeps only violation-report lines, and a manual page matches a few
+    /// of those words by accident while losing every line that does not.
+    #[test]
+    fn help_request_is_recognised_in_ecs_args() {
+        let asks = |a: &[&str]| {
+            args_utils::asks_tool_for_help(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+        };
+        assert!(asks(&["--help"]));
+        assert!(asks(&["check", "--help"]));
+        assert!(!asks(&["check", "src"]));
+    }
 
     #[test]
     fn test_ecs_success_output() {

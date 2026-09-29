@@ -7,6 +7,7 @@
 //! left alone rather than stripped: suppressing it would also erase it from the
 //! tee file, breaking recovery.
 
+use crate::core::args_utils;
 use crate::core::runner;
 use crate::core::stream::{self, FilterMode, StdinMode};
 use crate::core::tracking;
@@ -60,7 +61,10 @@ pub fn run(args: &[String], verbose: u8) -> Result<i32> {
         eprintln!("Running: {}", original_cmd);
     }
 
-    if args.first().map(String::as_str) != Some("run") {
+    // `uv run --help` describes uv, not the program uv would have run, so the successful-run
+    // filter treated the page as program output and capped it at CAP_INVENTORY lines: 2160
+    // bytes of uv's 11307 (#4198). Bare `uv --help` already came through here.
+    if args.first().map(String::as_str) != Some("run") || args_utils::asks_tool_for_help(args) {
         let status = cmd.status().context("Failed to run uv")?;
         timer.track_passthrough(&original_cmd, &format!("{rtk_cmd} (passthrough)"));
         return Ok(exit_code_from_status(&status, "uv"));
@@ -354,6 +358,23 @@ fn is_error_continuation(line: &str) -> bool {
 mod tests {
     use super::{CAP_INVENTORY, MAX_TRACEBACK_FRAMES, filter_uv_run_output};
     use crate::core::utils::count_tokens;
+
+    /// `uv run --help` describes uv, not the program uv would have run, so the
+    /// successful-run filter treated the page as program output and capped it at
+    /// CAP_INVENTORY lines. Bare `uv --help` already left on the passthrough branch.
+    #[test]
+    fn help_request_is_recognised_in_uv_run_args() {
+        let asks = |a: &[&str]| {
+            crate::core::args_utils::asks_tool_for_help(
+                &a.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            )
+        };
+        assert!(asks(&["run", "--help"]));
+        assert!(asks(&["run", "--version"]));
+        assert!(!asks(&["run", "pytest"]));
+        // Past the boundary the token is the program's own argument, not a request to uv.
+        assert!(!asks(&["run", "--", "mytool", "--help"]));
+    }
 
     #[test]
     fn test_filter_uv_run_keeps_program_output_on_success() {

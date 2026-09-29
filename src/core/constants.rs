@@ -8,6 +8,12 @@ pub const DEFAULT_HISTORY_DAYS: i64 = 90;
 
 /// RTK-only subcommands that should never fall back to raw execution.
 /// When adding a new RTK-only subcommand to `Commands`, add its clap name here.
+///
+/// Membership also decides whose `-h` a subcommand answers (`release_meta_flags` in
+/// `main.rs`): a command named after a tool defers to it, one named after an RTK concept
+/// does not. `err`, `test`, `summary` and `format` take a trailing command the way `proxy`
+/// and `run` do, but there is no `err` or `summary` binary to defer to -- RTK picks what
+/// runs, so the help is RTK's and a fallback would exec a name that is not a program.
 pub const RTK_META_COMMANDS: &[&str] = &[
     "gain",
     "discover",
@@ -30,9 +36,12 @@ pub const RTK_META_COMMANDS: &[&str] = &[
     "smart",
     "deps",
     "json",
-    // `err` and `summary` name no real binary, and since they grew `--shell`
-    // they have a flag to get wrong. Falling through would try to exec a
-    // program called `err` instead of reporting the flag error (#4125 review).
+    // `err`, `test`, `summary` and `format` name no real binary, and since they
+    // grew `--shell` they have a flag to get wrong. Falling through would try to
+    // exec a program called `err` instead of reporting the flag error (#4125
+    // review) -- and `test` would find `/bin/test`, which is worse.
     "err",
+    "test",
     "summary",
+    "format",
 ];

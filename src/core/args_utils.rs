@@ -1,6 +1,33 @@
 //! Utility functions for argument handling, particularly for restoring "--" escape
 //! arguments that clap consumes during parsing.
 
+use crate::core::arg_tokenizer::{self, TokenKind};
+
+/// True when these arguments ask the wrapped tool for its own help or version banner.
+///
+/// A filter that summarises rather than line-filters destroys that banner: `rtk cargo test
+/// --help` reported "0 tests" and `rtk git log --help` printed nothing at all, because the
+/// filter looked for test results and commits in a manual page and found none. Output the
+/// caller asked for in so many words is exactly the output RTK must not compress, so a
+/// wrapper that sees this returns true hands the invocation to the tool untouched.
+///
+/// Scoped before `--`, because past the boundary the token is an operand -- `rtk grep --
+/// --help` searches *for* that string. Restricted to the long spellings, which mean the
+/// same thing in every tool RTK wraps; the short forms are deliberately left out, since
+/// `-h` is `--help` for rg but `--no-filename` for grep, and `-V` is `--version` for cargo
+/// but `--verbose` for ctest. Only a filter that knows its own tool can read those, and
+/// [`crate::cmds::system::search`] does exactly that on top of this.
+///
+/// Uses the structural tokenizer, so a value-taking flag whose value happens to be the
+/// literal `--help` (`git log --grep --help`) reads as a request. The cost is one
+/// unfiltered command; the reverse default would eat a manual page.
+pub fn asks_tool_for_help(args: &[String]) -> bool {
+    let tokens = arg_tokenizer::tokenize(args);
+    arg_tokenizer::before_dashdash(&tokens)
+        .iter()
+        .any(|t| t.kind == TokenKind::Long && matches!(t.text, "help" | "version"))
+}
+
 /// Restores `--` tokens that clap consumed when using `trailing_var_arg = true`.
 ///
 /// Returns `parsed_args` unchanged when `raw_args` has the same or fewer `--` tokens
@@ -44,6 +71,46 @@ pub fn restore_double_dash_with_raw(parsed_args: &[String], raw_args: &[String])
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ============ asks_tool_for_help ============
+
+    fn asks(args: &[&str]) -> bool {
+        let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+        asks_tool_for_help(&args)
+    }
+
+    #[test]
+    fn long_help_and_version_are_requests() {
+        assert!(asks(&["--help"]));
+        assert!(asks(&["--version"]));
+        assert!(asks(&["log", "--help"]));
+        assert!(asks(&["test", "--no-run", "--help"]));
+    }
+
+    #[test]
+    fn short_forms_are_left_to_the_filter_that_knows_the_tool() {
+        // `-h` is --no-filename for grep and --help for rg; `-V` is --version for cargo
+        // and --verbose for ctest. Reading them here would be guessing.
+        assert!(!asks(&["-h"]));
+        assert!(!asks(&["-V"]));
+        assert!(!asks(&["-h", "TODO", "a.txt"]));
+    }
+
+    #[test]
+    fn past_the_boundary_it_is_an_operand() {
+        // `rtk grep -- --help f.txt` searches *for* the string "--help".
+        assert!(!asks(&["--", "--help", "f.txt"]));
+        assert!(!asks(&["--", "--version"]));
+        assert!(asks(&["--help", "--", "f.txt"]));
+    }
+
+    #[test]
+    fn an_ordinary_invocation_is_not_a_request() {
+        assert!(!asks(&[]));
+        assert!(!asks(&["log", "-5", "--oneline"]));
+        assert!(!asks(&["build", "--release"]));
+        assert!(!asks(&["--helper"]), "prefix of --help is not --help");
+    }
 
     fn restore_with_raw(parsed: &[&str], raw: &[&str]) -> Vec<String> {
         let parsed: Vec<String> = parsed.iter().map(|s| s.to_string()).collect();

@@ -22,7 +22,30 @@ pub enum CargoCommand {
     Nextest,
 }
 
+impl CargoCommand {
+    /// The word cargo itself expects, so a passthrough can rebuild the argv clap took apart.
+    fn cargo_name(&self) -> &'static str {
+        match self {
+            CargoCommand::Build => "build",
+            CargoCommand::Test => "test",
+            CargoCommand::Clippy => "clippy",
+            CargoCommand::Check => "check",
+            CargoCommand::Install => "install",
+            CargoCommand::Nextest => "nextest",
+        }
+    }
+}
+
 pub fn run(cmd: CargoCommand, args: &[String], verbose: u8) -> Result<i32> {
+    // `cargo <sub> --help` lists flags, not diagnostics: the build handler counts zero
+    // crates and zero errors in it and prints `cargo build (0 crates compiled)`, which is
+    // all the caller gets back of a 3 KB page (#4198). Unfiltered is the only honest answer.
+    if args_utils::asks_tool_for_help(args) {
+        let mut forwarded = vec![OsString::from(cmd.cargo_name())];
+        forwarded.extend(args.iter().map(OsString::from));
+        return runner::run_passthrough("cargo", &forwarded, verbose);
+    }
+
     match cmd {
         CargoCommand::Build => run_build(args, verbose),
         CargoCommand::Test => run_test(args, verbose),
@@ -1463,6 +1486,27 @@ mod tests {
         "    Finished dev [unoptimized + debuginfo] target(s) in 0.01s\n";
 
     use super::*;
+
+    /// `cargo build --help` used to come back as `cargo build (0 crates compiled)`: the
+    /// build handler counted zero crates in a flag listing and reported its summary.
+    #[test]
+    fn help_request_is_recognised_before_the_build_handler_sees_it() {
+        let asks = |a: &[&str]| {
+            args_utils::asks_tool_for_help(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+        };
+        assert!(asks(&["--help"]));
+        assert!(asks(&["--release", "--help"]));
+        assert!(!asks(&["--release"]));
+        // Past the boundary it is an argument for the test binary, not for cargo.
+        assert!(!asks(&["--", "--help"]));
+    }
+
+    #[test]
+    fn cargo_name_round_trips_every_subcommand() {
+        assert_eq!(CargoCommand::Build.cargo_name(), "build");
+        assert_eq!(CargoCommand::Test.cargo_name(), "test");
+        assert_eq!(CargoCommand::Nextest.cargo_name(), "nextest");
+    }
     use crate::core::args_utils::restore_double_dash_with_raw;
 
     #[test]

@@ -160,7 +160,7 @@ meta list is the same as `high`.
 Prefix every shell command with `rtk`: `rtk git status`, `rtk cargo test`,
 `rtk npm run build`, `rtk ls src/`. Keep the prefix inside chains:
 `rtk git add . && rtk git commit -m "msg"`. Commands RTK has no filter for
-run as-is, so the prefix is always safe.
+run as-is, and filtered ones keep their flags, behaviour and exit code.
 
 # Command output
 
@@ -194,8 +194,11 @@ tokens; behavior and exit code are unchanged.
 
 ### Verified while drafting
 
-- `rtk <unknown>` runs the command raw: `main.rs:1283` `run_fallback` executes any non-meta unknown
-  subcommand (after TOML filter lookup). "Prefix is always safe" in `full` holds.
+- `rtk <unknown>` runs the command raw: `run_fallback` executes any non-meta unknown subcommand
+  (after TOML filter lookup). That covers only the subcommands RTK does *not* define; for the ones
+  it does, the guarantee rests on `release_meta_flags` (`main.rs`) handing `-h`/`--help`/`-V`/
+  `--version` to the wrapped tool and on filters deferring to it for its own help (#4198). Before
+  that fix, `rtk grep -h` answered with RTK's usage on stdout at exit 0, and the claim was false.
 - `RTK_DISABLED=1` is honored by the hook (`registry::cmd_has_rtk_disabled_prefix`) and documented
   in `docs/guide/getting-started/configuration.md`.
 - `rtk proxy` records the command in tracking with 0% reduction (CLAUDE.md, Proxy Mode).

@@ -1,6 +1,7 @@
 //! Filters ESLint and Biome linter output, grouping violations by rule.
 
 use crate::cmds::python::sqlfluff_cmd;
+use crate::core::args_utils;
 use crate::core::config;
 use crate::core::stream::exec_capture;
 use crate::core::tracking;
@@ -109,6 +110,30 @@ pub fn run(runner: Option<&str>, args: &[String], verbose: u8) -> Result<i32> {
     let runner = runner.or_else(|| named_runner(args, skip));
 
     let (linter, explicit) = detect_linter(effective_args);
+
+    // A linter's own manual page is not a report, and everything below is built to read a
+    // report: the injected format flags aim the page at a subcommand the caller never named
+    // (`ruff check --output-format=json --help`), the appended `.` adds a path to it, and
+    // filter_eslint_json then prints a JSON parse error over the first 2000 characters --
+    // 2070 bytes where eslint wrote 4250 (#4198). Only the linter name rtk resolved is
+    // stripped; every other token is the caller's.
+    if args_utils::asks_tool_for_help(effective_args) {
+        let mut cmd = if is_python_linter(linter) {
+            resolved_command(linter)
+        } else {
+            tool_exec(runner, linter, MissingTool::Fail)
+        };
+        let forwarded = &effective_args[usize::from(explicit)..];
+        cmd.args(forwarded);
+        // Module spelled out: `runner` is this function's package-runner parameter.
+        return crate::core::runner::run(
+            cmd,
+            linter,
+            &forwarded.join(" "),
+            crate::core::runner::RunMode::Passthrough,
+            crate::core::runner::RunOptions::default(),
+        );
+    }
 
     // sqlfluff owns its own argv and its own rendering: routing, format-flag
     // detection and failure handling live in `sqlfluff_cmd::plan` so this entry
@@ -541,6 +566,19 @@ fn compact_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The linter's own page is not a report: filter_eslint_json printed a JSON parse error
+    /// over its first 2000 characters. Checked against the args left after the linter name.
+    #[test]
+    fn help_request_is_recognised_in_linter_args() {
+        let asks = |a: &[&str]| {
+            args_utils::asks_tool_for_help(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+        };
+        assert!(asks(&["--help"]));
+        assert!(asks(&["eslint", "--help"]));
+        assert!(asks(&["ruff", "check", "--help"]));
+        assert!(!asks(&["eslint", "src/"]));
+    }
 
     #[test]
     fn test_filter_eslint_json() {

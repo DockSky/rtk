@@ -7,6 +7,7 @@
 //! grouped by file and sorted by rule count.
 
 use super::utils::php_tool_command;
+use crate::core::args_utils;
 use crate::core::runner;
 use crate::core::utils::fallback_tail;
 use anyhow::Result;
@@ -34,6 +35,24 @@ struct PintFile {
 }
 
 pub fn run(args: &[String], verbose: u8) -> Result<i32> {
+    // The `is_utility_cmd` path below still filters: fallback_tail announces an
+    // unrecognized format on stderr and keeps only the last 60 lines, and it reads the
+    // first argument alone, so `pint --test --help` fell through to the JSON filter
+    // instead (#4198). A page the caller named outright goes out whole and unannounced.
+    // `-h` / `-V` stay with `is_utility_cmd`: the shared helper reads only the long
+    // spellings, which mean the same thing in every tool rtk wraps.
+    if args_utils::asks_tool_for_help(args) {
+        let mut cmd = php_tool_command("pint");
+        cmd.args(args);
+        return runner::run(
+            cmd,
+            "pint",
+            &args.join(" "),
+            runner::RunMode::Passthrough,
+            runner::RunOptions::default(),
+        );
+    }
+
     let mut cmd = php_tool_command("pint");
 
     let has_format = args
@@ -138,6 +157,19 @@ pub(crate) fn filter_pint_json(output: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `is_utility_cmd` reads the first argument alone, so `pint --test --help` fell through
+    /// to the JSON filter. Position must not matter.
+    #[test]
+    fn help_request_is_recognised_anywhere_in_pint_args() {
+        let asks = |a: &[&str]| {
+            args_utils::asks_tool_for_help(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+        };
+        assert!(asks(&["--help"]));
+        assert!(asks(&["--test", "--help"]));
+        assert!(asks(&["--version"]));
+        assert!(!asks(&["--test", "app"]));
+    }
 
     #[test]
     fn test_pint_empty_is_ok() {

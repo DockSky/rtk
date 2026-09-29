@@ -1378,11 +1378,13 @@ mod tests {
         // The payloads v0.49.0 and the builds after it wrote with nothing claiming them.
         // Should the awareness text ever be reworded, these assertions go rather than gaining
         // a digest: every file written from then on carries the ownership line instead.
-        for payload in [
-            RTK_AWARENESS_DEFAULT,
-            RTK_AWARENESS_HIGH,
-            RTK_AWARENESS_FULL,
-        ] {
+        //
+        // `RTK_AWARENESS_FULL` is off this list for exactly that reason: #4198 reworded its
+        // safety sentence, which used to promise the `rtk` prefix was "always safe" while
+        // `rtk grep -h` was answering with RTK's own usage. The v0.49.0 bytes stay in
+        // `RTK_MD_UNMARKED_PAYLOAD_DIGESTS` so uninstall still recognises the files already
+        // on disk; the constant itself is simply no longer one of them.
+        for payload in [RTK_AWARENESS_DEFAULT, RTK_AWARENESS_HIGH] {
             let remedy = "the awareness text was reworded: delete these two assertions rather \
                           than adding a digest for the new wording -- every file written from \
                           then on carries the ownership line, so nothing needs recognising by \

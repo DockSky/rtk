@@ -37,6 +37,9 @@ pub fn run_restore(args: &[String], verbose: u8) -> Result<i32> {
 
 pub fn run_format(args: &[String], verbose: u8) -> Result<i32> {
     let args = &args_utils::restore_double_dash(args);
+    if args_utils::asks_tool_for_help(args) {
+        return run_help_unfiltered("format", args, verbose);
+    }
     let tokens = tokenize_dotnet_args(args);
     let timer = tracking::TimedExecution::start();
     let (report_path, cleanup_report_path) = resolve_format_report_path(&tokens);
@@ -113,8 +116,24 @@ pub fn run_passthrough(args: &[OsString], verbose: u8) -> Result<i32> {
     Ok(result.exit_code)
 }
 
+/// Runs `dotnet <subcommand> …` through the module's unfiltered path, for requests whose
+/// output is the CLI's own documentation rather than a build or test log.
+///
+/// `dotnet build --help` otherwise gets an injected `-bl:<tmp>.binlog` it has no use for, and
+/// the usage page is then read as an MSBuild log: no errors, no warnings, so the summariser
+/// prints its "build succeeded" line and the page is gone (#4198). `dotnet format --help`
+/// fails the same way through the report-JSON path.
+fn run_help_unfiltered(subcommand: &str, args: &[String], verbose: u8) -> Result<i32> {
+    let mut os_args: Vec<OsString> = vec![OsString::from(subcommand)];
+    os_args.extend(args.iter().map(OsString::from));
+    run_passthrough(&os_args, verbose)
+}
+
 fn run_dotnet_with_binlog(subcommand: &str, args: &[String], verbose: u8) -> Result<i32> {
     let args = &args_utils::restore_double_dash(args);
+    if args_utils::asks_tool_for_help(args) {
+        return run_help_unfiltered(subcommand, args, verbose);
+    }
     let tokens = tokenize_dotnet_args(args);
     let timer = tracking::TimedExecution::start();
     let binlog_path = build_binlog_path(subcommand);
@@ -3337,5 +3356,20 @@ mod tests {
         cleanup_temp_file(&missing_file);
 
         assert!(!missing_file.exists());
+    }
+
+    /// #4198: `dotnet build --help` got an injected binlog and its usage page read as an MSBuild log.
+    /// The long spellings are what the shared guard keys on, so assert them here rather
+    /// than trust the wiring.
+    #[test]
+    fn test_help_request_bypasses_dotnet_filter() {
+        let help: Vec<String> = ["--help"].iter().map(|s| s.to_string()).collect();
+        assert!(args_utils::asks_tool_for_help(&help));
+
+        let normal: Vec<String> = ["--configuration", "Release"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert!(!args_utils::asks_tool_for_help(&normal));
     }
 }

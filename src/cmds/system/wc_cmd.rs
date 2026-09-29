@@ -6,11 +6,22 @@
 /// - `wc -w file.py`  → `96`
 /// - `wc -c file.py`  → `978`
 /// - `wc -l *.py`     → table with common path prefix stripped
+use crate::core::args_utils;
 use crate::core::runner::{self, RunOptions};
 use crate::core::utils::{ChildArgExt, resolved_command};
 use anyhow::Result;
+use std::ffi::OsString;
 
 pub fn run(args: &[String], verbose: u8) -> Result<i32> {
+    // GNU wc answers `--help` with a page of option documentation on stdout, and
+    // `filter_wc_output` reads every line of it as a count row: `format_multi_line` keeps the
+    // first whitespace-delimited token of each and throws the description away (#4198). BSD
+    // wc rejects the flag instead, and passthrough reproduces that error verbatim.
+    if args_utils::asks_tool_for_help(args) {
+        let os_args: Vec<OsString> = args.iter().map(OsString::from).collect();
+        return runner::run_passthrough("wc", &os_args, verbose);
+    }
+
     let mut cmd = resolved_command("wc");
     cmd.child_args(args);
 
@@ -382,5 +393,20 @@ mod tests {
         let raw = "";
         let result = filter_wc_output(raw, &WcMode::Full);
         assert_eq!(result, "");
+    }
+
+    /// #4198: GNU wc's `--help` page would be read as count rows and reduced to its first column.
+    /// The long spellings are what the shared guard keys on, so assert them here rather
+    /// than trust the wiring.
+    #[test]
+    fn test_help_request_bypasses_wc_filter() {
+        let help: Vec<String> = ["--help"].iter().map(|s| s.to_string()).collect();
+        assert!(args_utils::asks_tool_for_help(&help));
+
+        let normal: Vec<String> = ["-l", "src/main.rs"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert!(!args_utils::asks_tool_for_help(&normal));
     }
 }

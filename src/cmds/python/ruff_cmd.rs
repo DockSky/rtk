@@ -1,5 +1,6 @@
 //! Filters Ruff linter and formatter output.
 
+use crate::core::args_utils;
 use crate::core::config;
 use crate::core::runner;
 use crate::core::truncate::CAP_WARNINGS;
@@ -48,6 +49,23 @@ struct RuffDiagnostic {
 }
 
 pub fn run(args: &[String], verbose: u8) -> Result<i32> {
+    // Two separate losses on a manual page. `ruff check --help` is rewritten into
+    // `ruff check --output-format=json --help .`, so the page arrives with a format flag
+    // and a path the caller never typed and filter_ruff_check_json cannot read it; bare
+    // `ruff --help` skips the JSON filter but still lands in the passthrough arm, which
+    // truncates at 2000 characters (#4198).
+    if args_utils::asks_tool_for_help(args) {
+        let mut cmd = resolved_command("ruff");
+        cmd.args(args);
+        return runner::run(
+            cmd,
+            "ruff",
+            &args.join(" "),
+            runner::RunMode::Passthrough,
+            runner::RunOptions::default(),
+        );
+    }
+
     let is_check = is_check_invocation(args);
 
     let is_format = args.iter().any(|a| a == "format");
@@ -376,6 +394,19 @@ fn compact_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `ruff check --help` was rewritten into `ruff check --output-format=json --help .`, so
+    /// the page arrived with a format flag and a path the caller never typed.
+    #[test]
+    fn help_request_is_recognised_in_ruff_args() {
+        let asks = |a: &[&str]| {
+            args_utils::asks_tool_for_help(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+        };
+        assert!(asks(&["--help"]));
+        assert!(asks(&["check", "--help"]));
+        assert!(asks(&["format", "--help"]));
+        assert!(!asks(&["check", "src"]));
+    }
 
     #[test]
     fn known_ruff_subcommands_do_not_route_through_check() {

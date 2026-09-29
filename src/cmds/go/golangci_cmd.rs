@@ -195,6 +195,12 @@ pub(crate) fn detect_major_version() -> u32 {
 
 pub fn run(args: &[String], verbose: u8) -> Result<i32> {
     let args = &args_utils::restore_double_dash(args);
+    // `golangci-lint run --help` still classifies as `FilteredRun`, so RTK appended its JSON
+    // output flags to a usage page and then handed the page to `filter_golangci_json`, which
+    // reports a parse failure and a five-line tail instead of the help (#4198).
+    if args_utils::asks_tool_for_help(args) {
+        return run_passthrough(args, verbose);
+    }
     match classify_invocation(args) {
         Invocation::FilteredRun(invocation) => run_filtered(args, &invocation, verbose),
         Invocation::Passthrough => run_passthrough(args, verbose),
@@ -993,5 +999,17 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// #4198: `golangci-lint run --help` still classifies as FilteredRun, so the usage page hit the JSON decoder.
+    /// The long spellings are what the shared guard keys on, so assert them here rather
+    /// than trust the wiring.
+    #[test]
+    fn test_help_request_bypasses_golangci_lint_filter() {
+        let help: Vec<String> = ["run", "--help"].iter().map(|s| s.to_string()).collect();
+        assert!(args_utils::asks_tool_for_help(&help));
+
+        let normal: Vec<String> = ["run", "./..."].iter().map(|s| s.to_string()).collect();
+        assert!(!args_utils::asks_tool_for_help(&normal));
     }
 }

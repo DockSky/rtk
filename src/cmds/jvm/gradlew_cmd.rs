@@ -1,3 +1,4 @@
+use crate::core::args_utils;
 use crate::core::runner::{self, RunOptions};
 use crate::core::stream::StreamFilter;
 use crate::core::truncate::CAP_LIST;
@@ -118,6 +119,14 @@ impl StreamFilter for BuildLineFilter {
 }
 
 pub fn run(args: &[String], verbose: u8) -> Result<i32> {
+    // A task name plus `--help` prints Gradle's usage text, not a build log. `BuildLineFilter`
+    // keeps only the lines that look like compiler errors, so `./gradlew build --help` came
+    // back all but empty; `filter_test` would report "0 tests" over the same page (#4198).
+    if args_utils::asks_tool_for_help(args) {
+        let osargs: Vec<OsString> = args.iter().map(OsString::from).collect();
+        return runner::run_passthrough(gradlew_binary(), &osargs, verbose);
+    }
+
     // Verbose flags bypass filtering — user wants full output
     if args
         .iter()
@@ -1456,5 +1465,20 @@ BUILD SUCCESSFUL in 3s
         assert!(!is_framework_frame(
             "at com.example.MyApp.doSomething(MyApp.java:100)"
         ));
+    }
+
+    /// #4198: `./gradlew build --help` prints Gradle usage; `BuildLineFilter` kept almost none of it.
+    /// The long spellings are what the shared guard keys on, so assert them here rather
+    /// than trust the wiring.
+    #[test]
+    fn test_help_request_bypasses_gradlew_filter() {
+        let help: Vec<String> = ["build", "--help"].iter().map(|s| s.to_string()).collect();
+        assert!(args_utils::asks_tool_for_help(&help));
+
+        let normal: Vec<String> = ["build", "--no-daemon"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert!(!args_utils::asks_tool_for_help(&normal));
     }
 }

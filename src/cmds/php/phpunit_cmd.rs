@@ -6,6 +6,7 @@
 //! Dot-progress lines and headers are stripped entirely.
 
 use super::utils::{php_tool_command, strip_ansi_and_controls};
+use crate::core::args_utils;
 use crate::core::runner;
 use anyhow::Result;
 use regex::Regex;
@@ -27,6 +28,18 @@ pub fn run(args: &[String], verbose: u8) -> Result<i32> {
 
     if verbose > 0 {
         eprintln!("Running: phpunit {}", args.join(" "));
+    }
+
+    // filter_phpunit_output keeps the `Tests: X, Assertions: Y` line and the numbered
+    // failure blocks; a manual page has neither, so the whole page is dropped (#4198).
+    if args_utils::asks_tool_for_help(args) {
+        return runner::run(
+            cmd,
+            "phpunit",
+            &args.join(" "),
+            runner::RunMode::Passthrough,
+            runner::RunOptions::default(),
+        );
     }
 
     runner::run_filtered(
@@ -206,6 +219,18 @@ struct Counts {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// filter_phpunit_output keeps the `Tests:` tally and the numbered failure blocks; a
+    /// manual page has neither, so nothing of it survived.
+    #[test]
+    fn help_request_is_recognised_in_phpunit_args() {
+        let asks = |a: &[&str]| {
+            args_utils::asks_tool_for_help(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+        };
+        assert!(asks(&["--help"]));
+        assert!(asks(&["--version"]));
+        assert!(!asks(&["--testsuite", "unit"]));
+    }
 
     #[test]
     fn test_numbered_failure_heading_anchored() {

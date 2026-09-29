@@ -1,5 +1,6 @@
 //! Filters Go command output — test results, build errors, vet warnings.
 
+use crate::core::args_utils;
 use crate::core::guard::never_worse;
 use crate::core::runner;
 use crate::core::stream::{CaptureResult, exec_capture};
@@ -45,7 +46,23 @@ struct PackageResult {
     package_fail_output: Vec<String>,         // output lines collected before the package fail
 }
 
+/// Hands `go <subcommand> …` straight to the toolchain, for the invocations whose output is
+/// not the one the filters were written against.
+///
+/// `go vet --help` is the measured case: go prints 202 bytes of usage, `filter_go_vet` finds
+/// no `file:line:` diagnostics in it and emits its 24-byte "no issues" line instead (#4198).
+/// `go test --help` is worse still — the injected `-json` makes go reject the run outright.
+fn run_help_unfiltered(subcommand: &str, args: &[String], verbose: u8) -> Result<i32> {
+    let mut os_args: Vec<OsString> = vec![OsString::from(subcommand)];
+    os_args.extend(args.iter().map(OsString::from));
+    runner::run_passthrough("go", &os_args, verbose)
+}
+
 pub fn run_test(args: &[String], verbose: u8) -> Result<i32> {
+    if args_utils::asks_tool_for_help(args) {
+        return run_help_unfiltered("test", args, verbose);
+    }
+
     let mut cmd = resolved_command("go");
     cmd.arg("test");
 
@@ -83,6 +100,10 @@ pub fn run_test(args: &[String], verbose: u8) -> Result<i32> {
 }
 
 pub fn run_build(args: &[String], verbose: u8) -> Result<i32> {
+    if args_utils::asks_tool_for_help(args) {
+        return run_help_unfiltered("build", args, verbose);
+    }
+
     let mut cmd = resolved_command("go");
     cmd.arg("build");
 
@@ -104,6 +125,10 @@ pub fn run_build(args: &[String], verbose: u8) -> Result<i32> {
 }
 
 pub fn run_vet(args: &[String], verbose: u8) -> Result<i32> {
+    if args_utils::asks_tool_for_help(args) {
+        return run_help_unfiltered("vet", args, verbose);
+    }
+
     let mut cmd = resolved_command("go");
     cmd.arg("vet");
 
@@ -225,6 +250,20 @@ fn match_go_tool(args: &[OsString]) -> Option<(GoTool, &[OsString])> {
 /// Run `go tool golangci-lint` and filter its output via the golangci JSON filter.
 /// Reusing parts of golangci_cmd.
 fn run_go_tool_golangci_lint(args: &[OsString], verbose: u8) -> Result<i32> {
+    // Same failure as `rtk golangci-lint run --help`: RTK forces `run` plus its JSON output
+    // flags, so the usage page reaches `filter_golangci_json` and comes back as a parse
+    // error instead of the help the caller asked for (#4198).
+    let as_strings: Vec<String> = args
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    if args_utils::asks_tool_for_help(&as_strings) {
+        let mut os_args: Vec<OsString> =
+            vec![OsString::from("tool"), OsString::from("golangci-lint")];
+        os_args.extend(args.iter().cloned());
+        return runner::run_passthrough("go", &os_args, verbose);
+    }
+
     let timer = tracking::TimedExecution::start();
 
     let version = detect_go_tool_golangci_version();
@@ -1131,5 +1170,17 @@ utils.go:15:5: unreachable code"#;
         assert!(!has_golangci_format_flag(&os(&["run", "./..."])));
         assert!(!has_golangci_format_flag(&os(&[])));
         assert!(!has_golangci_format_flag(&os(&["--fix"])));
+    }
+
+    /// #4198: `go vet --help` printed 202 bytes; `filter_go_vet` reduced it to its 24-byte "no issues" line.
+    /// The long spellings are what the shared guard keys on, so assert them here rather
+    /// than trust the wiring.
+    #[test]
+    fn test_help_request_bypasses_go_filter() {
+        let help: Vec<String> = ["--help"].iter().map(|s| s.to_string()).collect();
+        assert!(args_utils::asks_tool_for_help(&help));
+
+        let normal: Vec<String> = ["./...", "-race"].iter().map(|s| s.to_string()).collect();
+        assert!(!args_utils::asks_tool_for_help(&normal));
     }
 }

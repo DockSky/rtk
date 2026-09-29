@@ -5,6 +5,7 @@
 //! capable of state-machine parsing (block collapse, continuation tracking,
 //! mode toggle) that TOML DSL cannot express.
 
+use crate::core::args_utils;
 use crate::core::runner::{self, RunOptions};
 use crate::core::truncate::CAP_WARNINGS;
 use crate::core::utils::{resolved_command, strip_ansi};
@@ -1838,6 +1839,14 @@ pub fn run_daemon(args: &[String], verbose: u8) -> Result<i32> {
 }
 
 fn run_tool(args: &[String], daemon: bool, verbose: u8) -> Result<i32> {
+    // Maven answers `--help` whatever goal it was given, so `mvn test --help` still routes to
+    // `MvnPhase::Test` and `filter_surefire` reduces the usage page — which has no Surefire
+    // block and no `BUILD SUCCESS` footer — to a bare summary line (#4198).
+    if args_utils::asks_tool_for_help(args) {
+        let osargs: Vec<OsString> = args.iter().map(OsString::from).collect();
+        return runner::run_passthrough(mvn_binary(daemon), &osargs, verbose);
+    }
+
     // Verbose flags bypass filtering — user wants full output.
     if args
         .iter()
@@ -5526,5 +5535,20 @@ mod tests {
             "an overflow (past-cap) module's own failing diagnostics must survive \
              (preserved verbatim), not be lost to a misrouted guess; got:\n{o}"
         );
+    }
+
+    /// #4198: Maven honours `--help` whatever goal it was given, so the Surefire filter saw a usage page.
+    /// The long spellings are what the shared guard keys on, so assert them here rather
+    /// than trust the wiring.
+    #[test]
+    fn test_help_request_bypasses_mvn_filter() {
+        let help: Vec<String> = ["test", "--help"].iter().map(|s| s.to_string()).collect();
+        assert!(args_utils::asks_tool_for_help(&help));
+
+        let normal: Vec<String> = ["test", "-DfailIfNoTests=false"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert!(!args_utils::asks_tool_for_help(&normal));
     }
 }

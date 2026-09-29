@@ -3,6 +3,7 @@
 //! Provides token-optimized alternatives to verbose `gh` commands.
 //! Focuses on extracting essential information from JSON outputs.
 
+use crate::core::args_utils;
 use crate::core::runner::{self, RunOptions};
 use crate::core::truncate::CAP_LIST;
 use crate::core::utils::{ok_confirmation, resolved_command, truncate};
@@ -190,6 +191,15 @@ where
 }
 
 pub fn run(subcommand: &str, args: &[String], verbose: u8, ultra_compact: bool) -> Result<i32> {
+    // Measured against gh 2.x: `rtk gh pr diff --help` printed 1 byte against gh's 1854, and
+    // `gh pr checks --help` 55 against 1562. RTK appends its own `--json …` selection, gh
+    // prints usage instead, and the formatters read the page as the JSON they expected.
+    // Some subcommands survive this by accident; a help request should not depend on it
+    // (#4198).
+    if args_utils::asks_tool_for_help(args) {
+        return run_passthrough("gh", subcommand, args);
+    }
+
     // When user explicitly passes --json, they want raw gh JSON output, not RTK filtering
     if has_json_flag(args) {
         return run_passthrough("gh", subcommand, args);
@@ -1778,5 +1788,23 @@ ___
             "expected fallback note when issue body filters to empty, got:\n{}",
             out
         );
+    }
+
+    /// #4198: Measured: `rtk gh pr diff --help` printed 1 byte against gh's 1854.
+    /// The long spellings are what the shared guard keys on, so assert them here rather
+    /// than trust the wiring.
+    #[test]
+    fn test_help_request_bypasses_gh_filter() {
+        let help: Vec<String> = ["pr", "diff", "--help"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert!(args_utils::asks_tool_for_help(&help));
+
+        let normal: Vec<String> = ["pr", "diff", "123"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert!(!args_utils::asks_tool_for_help(&normal));
     }
 }

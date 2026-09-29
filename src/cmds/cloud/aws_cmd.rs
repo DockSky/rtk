@@ -3,6 +3,7 @@
 //! Replaces verbose `--output table`/`text` with JSON, then compresses.
 //! Specialized filters for high-frequency commands (STS, S3, EC2, ECS, RDS, CloudFormation).
 
+use crate::core::args_utils;
 use crate::core::guard::never_worse;
 use crate::core::stream::{CaptureResult, exec_capture};
 use crate::core::tee::force_tee_hint;
@@ -46,6 +47,16 @@ impl FilterResult {
 
 /// Run an AWS CLI command with token-optimized output
 pub fn run(subcommand: &str, args: &[String], verbose: u8) -> Result<i32> {
+    // `aws s3 ls --help` still matches the routing table below, so RTK overrides the output
+    // format with `--output json` and reads the resulting help page as an API response — the
+    // per-service filters find none of the keys they look for and answer with an empty or
+    // near-empty summary. A help page is the answer, not a payload to compress (#4198).
+    if args_utils::asks_tool_for_help(args) {
+        let mut os_args: Vec<std::ffi::OsString> = vec![std::ffi::OsString::from(subcommand)];
+        os_args.extend(args.iter().map(std::ffi::OsString::from));
+        return crate::core::runner::run_passthrough("aws", &os_args, verbose);
+    }
+
     // Build the full sub-path: e.g. "sts" + ["get-caller-identity"] -> "sts get-caller-identity"
     let full_sub = if args.is_empty() {
         subcommand.to_string()
@@ -2788,5 +2799,20 @@ upload: file10.txt to s3://bucket/file10.txt
             output.contains("isMpaEnabled"),
             "object keys must be preserved, got:\n{output}"
         );
+    }
+
+    /// #4198: A help page routed through `--output json` reads as an empty API response.
+    /// The long spellings are what the shared guard keys on, so assert them here rather
+    /// than trust the wiring.
+    #[test]
+    fn test_help_request_bypasses_aws_filter() {
+        let help: Vec<String> = ["ls", "--help"].iter().map(|s| s.to_string()).collect();
+        assert!(args_utils::asks_tool_for_help(&help));
+
+        let normal: Vec<String> = ["ls", "s3://example-bucket"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert!(!args_utils::asks_tool_for_help(&normal));
     }
 }

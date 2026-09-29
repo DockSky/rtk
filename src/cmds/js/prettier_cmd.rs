@@ -1,5 +1,6 @@
 //! Filters Prettier output to show only files that need formatting.
 
+use crate::core::args_utils;
 use crate::core::runner::{self, RunOptions};
 use crate::core::truncate::CAP_WARNINGS;
 use crate::core::utils::package_manager_exec;
@@ -14,6 +15,19 @@ pub fn run(args: &[String], verbose: u8) -> Result<i32> {
 
     if verbose > 0 {
         eprintln!("Running: prettier {}", args.join(" "));
+    }
+
+    // A help page names no files, so filter_prettier_output counted them and answered
+    // "Prettier: 0 files formatted" -- 28 bytes standing in for 7069 bytes of manual
+    // (#4198). Run the same command unfiltered instead.
+    if args_utils::asks_tool_for_help(args) {
+        return runner::run(
+            cmd,
+            "prettier",
+            &args.join(" "),
+            runner::RunMode::Passthrough,
+            RunOptions::default(),
+        );
     }
 
     runner::run_filtered(
@@ -127,6 +141,20 @@ pub fn filter_prettier_output(output: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A help page names no files, so the filter counted them and answered
+    /// "Prettier: 0 files formatted" in place of the page.
+    #[test]
+    fn help_request_is_recognised_in_prettier_args() {
+        let asks = |a: &[&str]| {
+            args_utils::asks_tool_for_help(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+        };
+        assert!(asks(&["--help"]));
+        assert!(asks(&["--version"]));
+        assert!(!asks(&["--check", "src/**/*.ts"]));
+        // past the boundary it is a path named "--help", not a request
+        assert!(!asks(&["--", "--help"]));
+    }
 
     #[test]
     fn test_filter_all_formatted() {

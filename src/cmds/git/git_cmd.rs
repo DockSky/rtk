@@ -34,6 +34,27 @@ pub enum GitCommand {
     Worktree,
 }
 
+impl GitCommand {
+    /// The word git itself expects, so a passthrough can rebuild the argv clap took apart.
+    fn git_name(&self) -> &'static str {
+        match self {
+            GitCommand::Diff => "diff",
+            GitCommand::Log => "log",
+            GitCommand::Status => "status",
+            GitCommand::Show => "show",
+            GitCommand::Add => "add",
+            GitCommand::Commit => "commit",
+            GitCommand::Checkout => "checkout",
+            GitCommand::Push => "push",
+            GitCommand::Pull => "pull",
+            GitCommand::Branch => "branch",
+            GitCommand::Fetch => "fetch",
+            GitCommand::Stash { .. } => "stash",
+            GitCommand::Worktree => "worktree",
+        }
+    }
+}
+
 /// Create a git Command with global options (e.g. -C, -c, --git-dir, --work-tree)
 /// prepended before any subcommand arguments.
 fn git_cmd(global_args: &[String]) -> Command {
@@ -114,6 +135,24 @@ pub fn run(
         other => (other, args_utils::restore_double_dash(args)),
     };
     let args = &args;
+
+    // `git <sub> --help` is a manual page, not the output these handlers parse: run_log finds
+    // no commits in it, run_add no paths, and each prints its empty summary instead -- so the
+    // one thing the caller spelled out is the one thing RTK ate (#4198). Handing it straight
+    // to git costs a filter and keeps the page.
+    if args_utils::asks_tool_for_help(args) {
+        let mut forwarded: Vec<OsString> = global_args.iter().map(OsString::from).collect();
+        forwarded.push(OsString::from(cmd.git_name()));
+        if let GitCommand::Stash {
+            subcommand: Some(sub),
+        } = &cmd
+        {
+            forwarded.push(OsString::from(sub));
+        }
+        forwarded.extend(args.iter().map(OsString::from));
+        return runner::run_passthrough("git", &forwarded, verbose);
+    }
+
     match cmd {
         GitCommand::Diff => run_diff(args, max_lines, verbose, global_args),
         GitCommand::Log => run_log(args, max_lines, verbose, global_args),
@@ -3766,6 +3805,34 @@ pub fn run_passthrough(args: &[OsString], global_args: &[String], verbose: u8) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `git <sub> --help` is a manual page; run_log used to mine it for commits, find none
+    /// and print nothing at all. The guard has to key off the real argv, boundary included.
+    #[test]
+    fn help_request_is_recognised_for_every_git_subcommand_shape() {
+        let asks = |a: &[&str]| {
+            args_utils::asks_tool_for_help(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+        };
+        assert!(asks(&["--help"]));
+        assert!(asks(&["-5", "--help"]));
+        assert!(!asks(&["-5", "--oneline"]));
+        // `git log -- --help` is a pathspec named "--help", not a request.
+        assert!(!asks(&["--", "--help"]));
+    }
+
+    #[test]
+    fn git_name_round_trips_every_subcommand() {
+        assert_eq!(GitCommand::Log.git_name(), "log");
+        assert_eq!(GitCommand::Status.git_name(), "status");
+        assert_eq!(GitCommand::Worktree.git_name(), "worktree");
+        assert_eq!(
+            GitCommand::Stash {
+                subcommand: Some("list".into())
+            }
+            .git_name(),
+            "stash"
+        );
+    }
 
     #[test]
     fn test_branch_dash_u_links_its_upstream_value_not_a_free_positional() {

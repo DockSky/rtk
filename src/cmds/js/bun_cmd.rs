@@ -169,6 +169,14 @@ pub fn run_pkg(subcmd: &str, args: &[String], verbose: u8) -> Result<i32> {
 }
 
 pub fn run_pm_ls(args: &[String], verbose: u8) -> Result<i32> {
+    // `bun pm ls --help` is a manual page; the text fallback caps it at 500 characters,
+    // which cut bun's 2475 bytes down to 870 (#4198).
+    if crate::core::args_utils::asks_tool_for_help(args) {
+        let mut passthrough: Vec<OsString> = vec![OsString::from("pm"), OsString::from("ls")];
+        passthrough.extend(args.iter().map(OsString::from));
+        return crate::core::runner::run_passthrough("bun", &passthrough, verbose);
+    }
+
     // No --json injection: bun 1.x ignores the flag, `filter_bun_pm_ls` selects
     // its parser from the output's shape, and a bun that rejected an unknown
     // flag would make rtk fail a command that succeeds on its own.
@@ -210,6 +218,15 @@ pub fn run_build(args: &[String], verbose: u8) -> Result<i32> {
 
 /// Run `bun test` showing only failures. Args are passed as a vector, never via a shell.
 pub fn run_test(args: &[String], verbose: u8) -> Result<i32> {
+    // A manual page holds no test results, so the failures-only summary reported an empty
+    // run: 200 bytes where `bun test --help` writes 3368 (#4198). Same escape hatch as
+    // watch mode below -- the argv rtk would have run, unfiltered.
+    if crate::core::args_utils::asks_tool_for_help(args) {
+        let mut passthrough: Vec<OsString> = vec![OsString::from("test")];
+        passthrough.extend(args.iter().map(OsString::from));
+        return crate::core::runner::run_passthrough("bun", &passthrough, verbose);
+    }
+
     if crate::core::runner::is_watch_mode(args) {
         let mut passthrough: Vec<OsString> = vec![OsString::from("test")];
         passthrough.extend(args.iter().map(OsString::from));
@@ -250,6 +267,22 @@ pub fn run_passthrough(args: &[OsString], verbose: u8) -> Result<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `bun test --help` carries no test results and `bun pm ls --help` no package list,
+    /// so the failures-only summary and the 500-character text fallback each ate the page.
+    #[test]
+    fn help_request_is_recognised_in_bun_args() {
+        let asks = |a: &[&str]| {
+            crate::core::args_utils::asks_tool_for_help(
+                &a.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            )
+        };
+        assert!(asks(&["--help"]));
+        assert!(asks(&["--version"]));
+        assert!(!asks(&["--coverage"]));
+        assert!(!asks(&["--depth", "1"]));
+    }
+
     fn count_tokens(text: &str) -> usize {
         text.split_whitespace().count()
     }

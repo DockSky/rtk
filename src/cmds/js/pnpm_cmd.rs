@@ -1,5 +1,6 @@
 //! Filters pnpm output — dependency trees, install logs, outdated packages.
 
+use crate::core::args_utils;
 use crate::core::guard::never_worse;
 use crate::core::stream::exec_capture;
 use crate::core::tracking;
@@ -370,7 +371,29 @@ pub enum PnpmCommand {
     Install,
 }
 
+impl PnpmCommand {
+    /// The pnpm subcommand this variant stands for, as pnpm spells it.
+    fn pnpm_name(&self) -> &'static str {
+        match self {
+            PnpmCommand::List { .. } => "list",
+            PnpmCommand::Outdated => "outdated",
+            PnpmCommand::Install => "install",
+        }
+    }
+}
+
 pub fn run(cmd: PnpmCommand, args: &[String], verbose: u8) -> Result<i32> {
+    // Each handler reads a package inventory out of pnpm's output and finds none in a
+    // manual page: `rtk pnpm install --help` emitted 1394 bytes of pnpm's 10792 and
+    // `rtk pnpm outdated --help` 286 of 6299 (#4198). The injected `--json` /
+    // `--format json` would also be answered with the format flag's own help, not the
+    // subcommand's, so the forwarded argv carries only what the caller typed.
+    if args_utils::asks_tool_for_help(args) {
+        let mut forwarded: Vec<OsString> = vec![OsString::from(cmd.pnpm_name())];
+        forwarded.extend(args.iter().map(OsString::from));
+        return run_passthrough(&forwarded, verbose);
+    }
+
     match cmd {
         PnpmCommand::List { depth } => run_list(depth, args, verbose),
         PnpmCommand::Outdated => run_outdated(args, verbose),
@@ -564,6 +587,28 @@ pub fn run_passthrough(args: &[OsString], verbose: u8) -> Result<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The unfiltered path puts this word back at the head of the argv, so a wrong
+    /// spelling would hand the caller another subcommand's page.
+    #[test]
+    fn pnpm_name_round_trips_every_subcommand() {
+        assert_eq!(PnpmCommand::List { depth: 0 }.pnpm_name(), "list");
+        assert_eq!(PnpmCommand::Outdated.pnpm_name(), "outdated");
+        assert_eq!(PnpmCommand::Install.pnpm_name(), "install");
+    }
+
+    /// Each handler mines a package inventory out of pnpm's output and finds none in a
+    /// manual page.
+    #[test]
+    fn help_request_is_recognised_in_pnpm_args() {
+        let asks = |a: &[&str]| {
+            args_utils::asks_tool_for_help(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+        };
+        assert!(asks(&["--help"]));
+        assert!(asks(&["--filter", "@app", "--help"]));
+        assert!(!asks(&["--prod"]));
+        assert!(!asks(&["--frozen-lockfile"]));
+    }
 
     #[test]
     fn test_pnpm_list_parser_json() {
