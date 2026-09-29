@@ -4299,6 +4299,198 @@ mod tests {
         }
     }
 
+    // ---- #4198 fuzz: a wrapper must never answer a meta flag itself ----
+
+    /// Every subcommand path under `rtk` that forwards to a native tool, and every path
+    /// that is RTK's own. Read off the built tree so a new subcommand joins the fuzz on
+    /// its own.
+    fn classified_paths() -> (Vec<Vec<String>>, Vec<Vec<String>>) {
+        fn walk(
+            cmd: &clap::Command,
+            path: &[String],
+            rtk_own: bool,
+            wrappers: &mut Vec<Vec<String>>,
+            own: &mut Vec<Vec<String>>,
+        ) {
+            for sub in cmd.get_subcommands() {
+                if sub.get_name() == "help" {
+                    continue;
+                }
+                let mut here = path.to_vec();
+                here.push(sub.get_name().to_string());
+                // Only at depth 1: `rtk test` is RTK's, `rtk dotnet test` is dotnet's.
+                let mine = rtk_own
+                    || (path.is_empty()
+                        && core::constants::RTK_META_COMMANDS.contains(&sub.get_name()));
+                if mine {
+                    own.push(here.clone());
+                } else if forwards_to_native_tool(sub) {
+                    wrappers.push(here.clone());
+                }
+                walk(sub, &here, mine, wrappers, own);
+            }
+        }
+        let mut built = rtk_command();
+        built.build();
+        let (mut wrappers, mut own) = (Vec::new(), Vec::new());
+        walk(&built, &[], false, &mut wrappers, &mut own);
+        (wrappers, own)
+    }
+
+    /// Argv shapes a caller reaches for, with `meta` dropped at every position of each.
+    fn argv_shapes(meta: &str) -> Vec<Vec<String>> {
+        // Decoys chosen to exercise the parser rather than the tool: a value-taking flag,
+        // a short cluster, an attached value, a bare operand, and the boundary itself.
+        const BASES: &[&[&str]] = &[
+            &[],
+            &["pattern"],
+            &["-n"],
+            &["-rn", "src/"],
+            &["--color=always"],
+            &["-e", "x"],
+            &["a", "b", "c"],
+            &["--", "after"],
+            &["before", "--", "after"],
+        ];
+        let mut out = Vec::new();
+        for base in BASES {
+            for at in 0..=base.len() {
+                let mut argv: Vec<String> = base.iter().map(|s| s.to_string()).collect();
+                argv.insert(at, meta.to_string());
+                out.push(argv);
+            }
+        }
+        out
+    }
+
+    /// The #4198 invariant, over the whole surface: whatever a caller types, RTK never
+    /// answers a wrapped tool's `-h`, `--help`, `-V`, `--version` or `help` with its own
+    /// usage. Any other parse outcome is fine, since the args reach the tool either
+    /// directly or through the raw-exec fallback.
+    #[test]
+    fn fuzz_no_wrapper_ever_answers_a_meta_flag_itself() {
+        let (wrappers, _) = classified_paths();
+        assert!(wrappers.len() > 100, "expected the full wrapper surface");
+        let mut cmd = rtk_command();
+        let mut checked = 0usize;
+        for meta in ["-h", "--help", "-V", "--version", "help"] {
+            for path in &wrappers {
+                for extra in argv_shapes(meta) {
+                    let argv: Vec<String> = std::iter::once("rtk".to_string())
+                        .chain(path.iter().cloned())
+                        .chain(extra.iter().cloned())
+                        .collect();
+                    checked += 1;
+                    if let Err(e) = cmd.try_get_matches_from_mut(&argv) {
+                        assert!(
+                            !matches!(
+                                e.kind(),
+                                ErrorKind::DisplayHelp
+                                    | ErrorKind::DisplayVersion
+                                    | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+                            ),
+                            "RTK answered `{}` itself",
+                            argv.join(" ")
+                        );
+                    }
+                }
+            }
+        }
+        assert!(checked > 10_000, "fuzz did not cover enough, got {checked}");
+    }
+
+    /// The inverse, so the rule above cannot be satisfied by releasing everything: RTK's
+    /// own commands still answer `-h` and `--help`.
+    #[test]
+    fn fuzz_rtk_own_commands_still_answer_their_own_help() {
+        let (_, own) = classified_paths();
+        let mut cmd = rtk_command();
+        for path in &own {
+            for meta in ["-h", "--help"] {
+                let argv: Vec<String> = std::iter::once("rtk".to_string())
+                    .chain(path.iter().cloned())
+                    .chain(std::iter::once(meta.to_string()))
+                    .collect();
+                match cmd.try_get_matches_from_mut(&argv) {
+                    Err(e) if e.kind() == ErrorKind::DisplayHelp => {}
+                    other => panic!(
+                        "`{}` should print RTK's own help, got {:?}",
+                        argv.join(" "),
+                        other.err().map(|e| e.kind())
+                    ),
+                }
+            }
+        }
+    }
+
+    /// Nothing the caller typed may be dropped on the way to the tool: when the parse
+    /// succeeds, every token still appears in the leaf subcommand's own values.
+    #[test]
+    fn fuzz_wrapper_args_reach_the_leaf_verbatim() {
+        /// Descends to the leaf, collecting the subcommand names passed on the way. Past
+        /// the wrapper's own path those names are the caller's tokens: an
+        /// `external_subcommand` arm stores the first one as the subcommand name.
+        fn leaf<'m>(
+            m: &'m clap::ArgMatches,
+            depth: usize,
+            names: &mut Vec<String>,
+        ) -> &'m clap::ArgMatches {
+            match m.subcommand() {
+                Some((name, sub)) => {
+                    if depth == 0 {
+                        names.push(name.to_string());
+                    }
+                    leaf(sub, depth.saturating_sub(1), names)
+                }
+                None => m,
+            }
+        }
+        let (wrappers, _) = classified_paths();
+        let mut cmd = rtk_command();
+        for meta in ["-h", "--help"] {
+            for path in &wrappers {
+                for extra in argv_shapes(meta) {
+                    let argv: Vec<String> = std::iter::once("rtk".to_string())
+                        .chain(path.iter().cloned())
+                        .chain(extra.iter().cloned())
+                        .collect();
+                    let Ok(m) = cmd.try_get_matches_from_mut(&argv) else {
+                        continue; // a parse error routes to the raw-exec fallback
+                    };
+                    let mut names = Vec::new();
+                    let leaf = leaf(&m, path.len(), &mut names);
+                    // An `external_subcommand` arm collects OsString, everything else String.
+                    let seen: Vec<String> = leaf
+                        .ids()
+                        .flat_map(|id| {
+                            let strs = leaf
+                                .try_get_many::<String>(id.as_str())
+                                .ok()
+                                .flatten()
+                                .map(|v| v.cloned().collect::<Vec<_>>())
+                                .unwrap_or_default();
+                            let os = leaf
+                                .try_get_many::<std::ffi::OsString>(id.as_str())
+                                .ok()
+                                .flatten()
+                                .map(|v| {
+                                    v.map(|o| o.to_string_lossy().into_owned())
+                                        .collect::<Vec<_>>()
+                                })
+                                .unwrap_or_default();
+                            strs.into_iter().chain(os)
+                        })
+                        .collect();
+                    assert!(
+                        seen.iter().chain(names.iter()).any(|v| v == meta),
+                        "`{}` parsed but `{meta}` reached nothing: {seen:?} {names:?}",
+                        argv.join(" ")
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn rtk_composite_commands_keep_their_help() {
         let root = rtk_command();

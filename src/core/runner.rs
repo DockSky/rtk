@@ -270,7 +270,7 @@ fn last_lines_offset(text: &str, n: usize) -> Option<(usize, usize)> {
 }
 
 /// Tools whose `-h` is not help: `psql -h host`, `ls`/`tree -h` (human sizes),
-/// `grep -h` (`--no-filename`).
+/// `grep -h` (`--no-filename`). Matched whole, so a cluster like `-lh` is not `-h`.
 const DASH_H_IS_NOT_HELP: &[&str] = &["psql", "ls", "tree", "grep"];
 
 /// True when this invocation asks the tool for its own usage or version banner.
@@ -1371,6 +1371,76 @@ mod requests_help_tests {
             "pnpm",
             &["exec", "--", "vitest", "run"]
         )));
+    }
+
+    /// Every tool RTK wraps, crossed with every position a meta token can take. The
+    /// property is the boundary, not a table of answers: before `--` the token is a
+    /// request, past it the tool is being asked to match on it.
+    #[test]
+    fn fuzz_the_boundary_decides_and_position_does_not() {
+        const TOOLS: &[&str] = &[
+            "cargo", "git", "go", "npm", "pnpm", "docker", "kubectl", "gh", "mvn", "tsc", "pip",
+            "uv", "dotnet", "rg", "psql", "ls", "tree", "grep", "find", "wc",
+        ];
+        const BASES: &[&[&str]] = &[
+            &[],
+            &["build"],
+            &["-n", "1"],
+            &["log", "--oneline", "-5"],
+            &["a", "b", "c", "d"],
+        ];
+        let mut checked = 0usize;
+        for tool in TOOLS {
+            let short_is_help = !DASH_H_IS_NOT_HELP.contains(tool);
+            for meta in ["--help", "--version", "-h"] {
+                let expected = meta != "-h" || short_is_help;
+                for base in BASES {
+                    for at in 0..=base.len() {
+                        let mut argv: Vec<String> = base.iter().map(|s| s.to_string()).collect();
+                        argv.insert(at, meta.to_string());
+                        checked += 1;
+                        assert_eq!(requests_help_args(tool, &argv), expected, "{tool} {argv:?}");
+
+                        // The same tokens past the boundary are operands, never a request.
+                        let mut guarded = vec!["--".to_string()];
+                        guarded.extend(argv.iter().cloned());
+                        assert!(
+                            !requests_help_args(tool, &guarded),
+                            "{tool} {guarded:?} is past the boundary"
+                        );
+                    }
+                }
+            }
+        }
+        assert!(checked > 500, "fuzz did not cover enough, got {checked}");
+    }
+
+    /// Shapes that have made argument scanners panic: nothing, a bare boundary, repeated
+    /// boundaries, a lone dash, empty strings and non-UTF8.
+    #[test]
+    fn fuzz_odd_argv_never_panics() {
+        const ODD: &[&[&str]] = &[
+            &[],
+            &["--"],
+            &["--", "--"],
+            &["-"],
+            &[""],
+            &["", "--help"],
+            &["--help="],
+            &["-hh"],
+            &["--HELP"],
+            &["\u{1f600}", "--help"],
+        ];
+        for tool in ["cargo", "ls", "grep", ""] {
+            for argv in ODD {
+                let owned: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+                let _ = requests_help_args(tool, &owned);
+            }
+        }
+        // A cluster is not the flag: `-hh` is not `-h`.
+        assert!(!requests_help_args("cargo", &["-hh".to_string()]));
+        // Case matters; tools spell it lowercase.
+        assert!(!requests_help_args("cargo", &["--HELP".to_string()]));
     }
 
     #[test]
