@@ -2,7 +2,7 @@
 //! must survive RTK.
 //!
 //! Two failure modes are covered, because the bug had two halves. RTK must not answer the
-//! flag itself (its usage is recognisable by the `Usage: rtk ` line), and the filter must
+//! flag itself (its usage is recognisable by the `Usage: rtk` line), and the filter must
 //! not compress the page the tool printed -- `cargo build --help` came back as
 //! `cargo build (0 crates compiled)`, 31 bytes of 3135.
 //!
@@ -14,10 +14,40 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn on_path(tool: &str) -> Option<PathBuf> {
-    std::env::split_paths(&std::env::var_os("PATH")?)
-        .map(|dir| dir.join(tool))
-        .find(|p| p.is_file())
+    let dirs: Vec<PathBuf> = std::env::split_paths(&std::env::var_os("PATH")?).collect();
+    if cfg!(windows) {
+        // A bare `npm` on PATH is an extensionless shell script; spawning it fails with
+        // "not a valid Win32 application". PATHEXT names the ones that are programs.
+        let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".EXE;.CMD;.BAT;.COM".into());
+        for dir in &dirs {
+            for ext in pathext.split(';').filter(|e| !e.is_empty()) {
+                let candidate = dir.join(format!("{tool}{ext}"));
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+            }
+        }
+        return None;
+    }
+    dirs.into_iter()
+        .find(|d| d.join(tool).is_file())
+        .map(|d| d.join(tool))
 }
+
+/// Clap names the program from argv[0], which is `rtk.exe` on Windows, so the marker
+/// stops at the stem. Getting this wrong made the "RTK did not answer" check below pass
+/// for the wrong reason on Windows.
+fn is_rtk_usage(text: &str) -> bool {
+    text.contains("Usage: rtk")
+}
+
+/// Windows ships a `find.exe` and a `tree.com` that are unrelated programs, and `ls`,
+/// `grep` and `wc` only exist there if a Unix toolchain is on PATH. Comparing RTK against
+/// those proves nothing about the filters, which assume the Unix tools.
+#[cfg(windows)]
+const UNIX_ONLY: &[&str] = &["grep", "ls", "tree", "wc", "find"];
+#[cfg(not(windows))]
+const UNIX_ONLY: &[&str] = &[];
 
 struct Output {
     text: String,
@@ -183,6 +213,10 @@ fn a_wrapped_tools_own_help_survives_rtk() {
     let mut skipped = Vec::new();
 
     for case in CASES {
+        if UNIX_ONLY.contains(&case.tool) {
+            skipped.push(case.tool);
+            continue;
+        }
         let Some(tool) = on_path(case.tool) else {
             skipped.push(case.tool);
             continue;
@@ -193,7 +227,7 @@ fn a_wrapped_tools_own_help_survives_rtk() {
         checked += 1;
 
         assert!(
-            !mine.text.contains("Usage: rtk "),
+            !is_rtk_usage(&mine.text),
             "{label} answered with RTK's own usage:\n{}",
             &mine.text[..mine.text.len().min(200)]
         );
@@ -224,6 +258,8 @@ fn a_wrapped_tools_own_help_survives_rtk() {
 
 /// The reported bug, end to end: `-h` is grep's `--no-filename`, so the output must be
 /// grep's matches, byte for byte, and not a help page.
+// Unix only: these assert GNU/BSD flag semantics that the Windows namesakes do not share.
+#[cfg(unix)]
 #[test]
 fn grep_dash_h_searches_and_drops_the_filename() {
     let Some(grep) = on_path("grep") else {
@@ -265,6 +301,8 @@ fn grep_dash_h_searches_and_drops_the_filename() {
 /// future edit from silently turning compression off with every other check still green.
 /// `ls` is along for the ride rather than proving the table: it renders human sizes itself
 /// and strips `-h` before building the child, so the guard never sees that flag.
+// Unix only: these assert GNU/BSD flag semantics that the Windows namesakes do not share.
+#[cfg(unix)]
 #[test]
 fn a_tools_own_dash_h_is_still_filtered() {
     let dir = std::env::temp_dir().join("rtk_4198_filtered");
@@ -311,7 +349,7 @@ fn rtks_own_help_is_still_rtks() {
     ] {
         let out = run(&rtk, &args);
         assert!(
-            out.text.contains("Usage: rtk "),
+            is_rtk_usage(&out.text),
             "rtk {} should print RTK's own usage, got:\n{}",
             args.join(" "),
             &out.text[..out.text.len().min(200)]

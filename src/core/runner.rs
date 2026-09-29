@@ -1314,63 +1314,65 @@ mod forwarded_stderr_tests {
 mod requests_help_tests {
     use super::*;
 
-    fn built(program: &str, args: &[&str]) -> Command {
-        let mut c = Command::new(program);
-        c.args(args);
-        c
+    /// The rule itself, without a `Command`: `.semgrep.yml` forbids
+    /// `Command::new(<variable>)`, and the logic is the pure part anyway.
+    fn asks(tool: &str, args: &[&str]) -> bool {
+        requests_help_args(
+            tool,
+            &args.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+        )
     }
 
     #[test]
     fn long_spellings_are_a_usage_request() {
-        assert!(requests_help(&built("cargo", &["build", "--help"])));
-        assert!(requests_help(&built("cargo", &["--version"])));
-        assert!(!requests_help(&built("cargo", &["build", "--release"])));
-        assert!(!requests_help(&built("cargo", &[])));
+        assert!(asks("cargo", &["build", "--help"]));
+        assert!(asks("cargo", &["--version"]));
+        assert!(!asks("cargo", &["build", "--release"]));
+        assert!(!asks("cargo", &[]));
     }
 
     #[test]
     fn short_h_is_a_request_except_where_the_tool_defines_it() {
-        assert!(requests_help(&built("cargo", &["build", "-h"])));
-        assert!(requests_help(&built("go", &["vet", "-h"])));
+        assert!(asks("cargo", &["build", "-h"]));
+        assert!(asks("go", &["vet", "-h"]));
         for tool in ["ls", "tree", "grep", "psql"] {
-            assert!(
-                !requests_help(&built(tool, &["-h"])),
-                "{tool} -h is its own flag"
-            );
+            assert!(!asks(tool, &["-h"]), "{tool} -h is its own flag");
         }
         assert!(
-            requests_help(&built("ls", &["--help"])),
+            asks("ls", &["--help"]),
             "the long form is still help everywhere"
         );
     }
 
+    /// The adapter, once, with literal programs: `requests_help` must read the stem off
+    /// the program's path and the args off the `Command`.
     #[test]
-    fn the_program_is_read_from_its_path() {
-        assert!(requests_help(&built("/usr/bin/cargo", &["-h"])));
-        assert!(!requests_help(&built("/bin/ls", &["-h"])));
+    fn the_command_form_reads_the_program_stem_and_args() {
+        let mut cargo = Command::new("/usr/bin/cargo");
+        cargo.arg("-h");
+        assert!(requests_help(&cargo));
+
+        let mut ls = Command::new("/bin/ls");
+        ls.arg("-h");
+        assert!(!requests_help(&ls), "-h belongs to ls");
+
+        let mut ls_long = Command::new("/bin/ls");
+        ls_long.arg("--help");
+        assert!(requests_help(&ls_long));
     }
 
     #[test]
     fn past_the_boundary_it_is_an_operand() {
-        assert!(!requests_help(&built("grep", &["--", "--help", "f.txt"])));
-        assert!(requests_help(&built("grep", &["--help", "--", "f.txt"])));
+        assert!(!asks("grep", &["--", "--help", "f.txt"]));
+        assert!(asks("grep", &["--help", "--", "f.txt"]));
     }
 
     #[test]
     fn rtks_own_package_runner_prefix_is_not_the_boundary() {
-        assert!(requests_help(&built(
-            "pnpm",
-            &["exec", "--", "vitest", "--help"]
-        )));
-        assert!(requests_help(&built("npx", &["--", "tsc", "--help"])));
-        assert!(requests_help(&built(
-            "npx",
-            &["--no-install", "--", "tsc", "-h"]
-        )));
-        assert!(!requests_help(&built(
-            "pnpm",
-            &["exec", "--", "vitest", "run"]
-        )));
+        assert!(asks("pnpm", &["exec", "--", "vitest", "--help"]));
+        assert!(asks("npx", &["--", "tsc", "--help"]));
+        assert!(asks("npx", &["--no-install", "--", "tsc", "-h"]));
+        assert!(!asks("pnpm", &["exec", "--", "vitest", "run"]));
     }
 
     /// Every tool RTK wraps, crossed with every position a meta token can take. The
@@ -1444,12 +1446,11 @@ mod requests_help_tests {
     }
 
     #[test]
-    fn the_args_form_agrees_with_the_command_form() {
-        let owned = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert!(requests_help_args("git", &owned(&["log", "--help"])));
-        assert!(!requests_help_args("git", &owned(&["log", "-5"])));
-        assert!(!requests_help_args("ls", &owned(&["-lh"])));
-        assert!(!requests_help_args("find", &owned(&["--", "--help"])));
+    fn a_cluster_is_not_the_flag() {
+        assert!(!asks("ls", &["-lh"]));
+        assert!(!asks("cargo", &["-qh"]));
+        assert!(asks("git", &["log", "--help"]));
+        assert!(!asks("git", &["log", "-5"]));
     }
 }
 
