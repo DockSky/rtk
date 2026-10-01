@@ -40,12 +40,15 @@ jobs:
           printf '%s' "${TOKEN}" > token.txt
           trap 'rm -f token.txt' EXIT
 
-          curl --silent --show-error --fail-with-body --max-time 60 \
+          if ! RESPONSE=$(curl --silent --show-error --fail-with-body --max-time 60 \
             --request POST \
             --data-urlencode "token@token.txt" \
             --data-urlencode "ref=main" \
             --data-urlencode "variables[RTK_PR]=${PR_NUMBER}" \
             --data-urlencode "variables[RTK_PR_URL]=${PR_URL}" \
-            "https://gitlab.com/api/v4/projects/${PROJECT_ID}/trigger/pipeline" > /dev/null
+            "https://gitlab.com/api/v4/projects/${PROJECT_ID}/trigger/pipeline"); then
+            echo "::error::The transparency pipeline rejected the request: ${RESPONSE}"
+            exit 1
+          fi
 
           echo "::notice::Transparency pipeline started for PR #${PR_NUMBER}."
