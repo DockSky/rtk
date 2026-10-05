@@ -325,7 +325,7 @@ fn asks_for_usage(stem: &str, args: &[String]) -> bool {
             .then(ValueSpec::value)
     };
     let tokens = arg_tokenizer::tokenize_grammar(args, &takes_value, spelling.dialect);
-    if names_usage(arg_tokenizer::before_dashdash(&tokens), &spelling) {
+    if names_usage(arg_tokenizer::before_dashdash(&tokens), args, &spelling) {
         return true;
     }
     if !spelling.past_boundary {
@@ -345,6 +345,7 @@ fn asks_for_usage(stem: &str, args: &[String]) -> bool {
     let inner = arg_tokenizer::tokenize_grammar(forwarded, &|_, _| None, Dialect::Posix);
     names_usage(
         arg_tokenizer::before_dashdash(&inner),
+        forwarded,
         &HelpSpelling {
             short_h: true,
             dialect: Dialect::Posix,
@@ -353,7 +354,11 @@ fn asks_for_usage(stem: &str, args: &[String]) -> bool {
     )
 }
 
-fn names_usage(tokens: &[arg_tokenizer::Token<'_>], spelling: &HelpSpelling) -> bool {
+fn names_usage(
+    tokens: &[arg_tokenizer::Token<'_>],
+    args: &[String],
+    spelling: &HelpSpelling,
+) -> bool {
     tokens.iter().any(|t| match t.kind {
         // A flag carrying a value is naming something, not asking.
         TokenKind::Long => {
@@ -361,7 +366,14 @@ fn names_usage(tokens: &[arg_tokenizer::Token<'_>], spelling: &HelpSpelling) -> 
                 && t.attached.is_none()
                 && t.linked.is_none()
         }
-        TokenKind::Short => spelling.short_h && t.text == "h",
+        // Only when `-h` is the whole argument. Inside a cluster that `h` is almost never
+        // the flag: `find -maxdepth 2` and `mvn -Dhttp.proxyHost=p` both carry one, and
+        // reading them as a request runs the command unfiltered.
+        TokenKind::Short => {
+            spelling.short_h
+                && t.text == "h"
+                && args.get(t.source_index).map(String::as_str) == Some("-h")
+        }
         _ => false,
     })
 }
@@ -1551,15 +1563,32 @@ mod requests_help_tests {
                 let _ = requests_help_args(tool, &owned);
             }
         }
-        assert!(requests_help_args("cargo", &["-hh".to_string()]));
+        assert!(!requests_help_args("cargo", &["-hh".to_string()]));
         // Case matters; tools spell it lowercase.
         assert!(!requests_help_args("cargo", &["--HELP".to_string()]));
     }
 
+    /// The regression this rule exists for: a single-dash long name and a `-D` property
+    /// both carry an `h`, and reading either as a request runs the command unfiltered.
     #[test]
-    fn a_cluster_carries_the_flag_too() {
+    fn a_letter_inside_another_flag_is_not_a_request() {
+        assert!(!asks("find", &["src", "-maxdepth", "2", "-name", "mod.rs"]));
+        assert!(!asks("find", &["src", "-ipath", "x"]));
+        assert!(!asks("mvn", &["-Dhttp.proxyHost=proxy", "test"]));
+        assert!(!asks("gradlew", &["-Dhttp.x=1", "tasks"]));
+        assert!(!asks("cargo", &["build", "--features", "graph"]));
+        // Still found when it is the argument.
+        assert!(asks("find", &["-h"]));
+        assert!(asks("cargo", &["build", "-h"]));
+    }
+
+    #[test]
+    fn a_cluster_is_not_the_flag() {
         assert!(!asks("ls", &["-lh"]), "but -h is ls's own");
-        assert!(asks("cargo", &["-qh"]), "a cluster carries -h too");
+        assert!(
+            !asks("cargo", &["-qh"]),
+            "inside a cluster the h is not the flag"
+        );
         assert!(asks("git", &["log", "--help"]));
         assert!(!asks("git", &["log", "-5"]));
     }
