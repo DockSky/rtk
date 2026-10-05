@@ -1,5 +1,6 @@
 //! Shared command execution skeleton for filter modules.
 
+use crate::core::arg_tokenizer::{self, Dialect, TokenKind, ValueSpec};
 use anyhow::{Context, Result};
 use regex::Regex;
 use std::borrow::Cow;
@@ -269,44 +270,123 @@ fn last_lines_offset(text: &str, n: usize) -> Option<(usize, usize)> {
         .map(|(index, _)| (index + 1, skipped))
 }
 
-/// Tools whose `-h` is not help: `psql -h host`, `ls`/`tree -h` (human sizes),
-/// `grep -h` (`--no-filename`). Matched whole, so a cluster like `-lh` is not `-h`.
-const DASH_H_IS_NOT_HELP: &[&str] = &["psql", "ls", "tree", "grep"];
+/// How one tool spells a request for its own usage.
+struct HelpSpelling {
+    /// `-h` asks for help. False where the tool spells something else with it.
+    short_h: bool,
+    /// `Msbuild` makes `-flag`, `--flag` and `/flag` one atomic name, which is how dotnet
+    /// reads `-?` and `/?` and how Go reads `-help`. `Posix` clusters short flags instead.
+    dialect: Dialect,
+    /// The tool hands everything past `--` to another program, so a request there is still
+    /// a request: `cargo test -- --help` is libtest's usage, where `grep -- --help` is a
+    /// pattern to search for.
+    past_boundary: bool,
+}
+
+fn help_spelling(stem: &str, first: Option<&str>) -> HelpSpelling {
+    let short_h = !matches!(stem, "psql" | "ls" | "tree" | "grep");
+    // dotnet is MSBuild-flavoured; Go's flag package takes single-dash long names.
+    let dialect = match stem {
+        "dotnet" | "go" => Dialect::Msbuild,
+        _ => Dialect::Posix,
+    };
+    // `npx [--no-install] -- <tool>` is how utils::tool_exec reaches a tool that is not on
+    // PATH, so for npx the boundary is always RTK's own rather than the caller's. bunx needs
+    // no entry: it takes the tool as a plain positional.
+    let past_boundary = stem == "npx"
+        || matches!(
+            (stem, first.unwrap_or_default()),
+            ("cargo", "test" | "bench" | "run" | "nextest")
+                | ("go", "test" | "run")
+                | ("uv", "run")
+                | ("deno", "run" | "test")
+                | ("npm" | "pnpm" | "yarn" | "bun", "run" | "exec" | "test")
+        );
+    HelpSpelling {
+        short_h,
+        dialect,
+        past_boundary,
+    }
+}
 
 /// True when this invocation asks the tool for its own usage or version banner.
 ///
 /// A filter reads a usage page as an empty run, and `guard::never_worse` does not catch it
-/// because the summary is the smaller of the two (#4198). Matched by position, not grammar:
-/// `git log --grep --help` runs unfiltered rather than searching for the string.
+/// because the summary is the smaller of the two (#4198).
+fn asks_for_usage(stem: &str, args: &[String]) -> bool {
+    let first = args.first().map(String::as_str);
+    let spelling = help_spelling(stem, first);
+    // `cargo install <crate> --version 1.2.3` names a version to install, not a request.
+    let takes_value = |kind: TokenKind, name: &str| {
+        (stem == "cargo"
+            && first == Some("install")
+            && kind == TokenKind::Long
+            && name == "version")
+            .then(ValueSpec::value)
+    };
+    let tokens = arg_tokenizer::tokenize_grammar(args, &takes_value, spelling.dialect);
+    if names_usage(arg_tokenizer::before_dashdash(&tokens), &spelling) {
+        return true;
+    }
+    if !spelling.past_boundary {
+        return false;
+    }
+    // Past the boundary the tokenizer stops classifying, because for most tools that region
+    // is operands. For one that forwards it, it is another program's argv and gets its own
+    // scan: `cargo test -- --help` is libtest's usage, `pnpm exec -- tsc --help` is tsc's.
+    let Some(boundary) = tokens
+        .iter()
+        .find(|t| t.kind == TokenKind::DashDash)
+        .map(|t| t.source_index)
+    else {
+        return false;
+    };
+    let forwarded = &args[boundary + 1..];
+    let inner = arg_tokenizer::tokenize_grammar(forwarded, &|_, _| None, Dialect::Posix);
+    names_usage(
+        arg_tokenizer::before_dashdash(&inner),
+        &HelpSpelling {
+            short_h: true,
+            dialect: Dialect::Posix,
+            past_boundary: false,
+        },
+    )
+}
+
+fn names_usage(tokens: &[arg_tokenizer::Token<'_>], spelling: &HelpSpelling) -> bool {
+    tokens.iter().any(|t| match t.kind {
+        // A flag carrying a value is naming something, not asking.
+        TokenKind::Long => {
+            (matches!(t.text, "help" | "version" | "?") || (spelling.short_h && t.text == "h"))
+                && t.attached.is_none()
+                && t.linked.is_none()
+        }
+        TokenKind::Short => spelling.short_h && t.text == "h",
+        _ => false,
+    })
+}
+
+/// True when `cmd` asks the tool for its usage. Reads the program's stem and its argv; it
+/// never runs anything.
 pub fn requests_help(cmd: &Command) -> bool {
     let stem = std::path::Path::new(cmd.get_program())
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or_default();
-    let args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
+    let args: Vec<String> = cmd
+        .get_args()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
     asks_for_usage(stem, &args)
 }
 
 /// Same rule, for a filter that runs the child itself rather than through [`run`].
 pub fn requests_help_args(tool: &str, args: &[String]) -> bool {
-    let args: Vec<&std::ffi::OsStr> = args.iter().map(std::ffi::OsStr::new).collect();
-    asks_for_usage(tool, &args)
-}
-
-fn asks_for_usage(stem: &str, args: &[&std::ffi::OsStr]) -> bool {
-    let dash_h_is_help = !DASH_H_IS_NOT_HELP.contains(&stem);
-    // `pnpm exec -- <tool>` and `npx -- <tool>` are RTK's own words; that `--` is not the
-    // caller's boundary, so the tool's argv starts after it.
-    let runner_prefix = match (stem, args) {
-        ("pnpm" | "yarn", [exec, sep, ..]) if *exec == "exec" && *sep == "--" => 2,
-        ("npx", [flag, sep, ..]) if *flag == "--no-install" && *sep == "--" => 2,
-        ("npx", [sep, ..]) if *sep == "--" => 1,
-        _ => 0,
-    };
-    args[runner_prefix..]
-        .iter()
-        .take_while(|arg| **arg != "--")
-        .any(|arg| *arg == "--help" || *arg == "--version" || (dash_h_is_help && *arg == "-h"))
+    let stem = std::path::Path::new(tool)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(tool);
+    asks_for_usage(stem, args)
 }
 
 pub fn run(
@@ -1393,7 +1473,7 @@ mod requests_help_tests {
         ];
         let mut checked = 0usize;
         for tool in TOOLS {
-            let short_is_help = !DASH_H_IS_NOT_HELP.contains(tool);
+            let short_is_help = help_spelling(tool, None).short_h;
             for meta in ["--help", "--version", "-h"] {
                 let expected = meta != "-h" || short_is_help;
                 for base in BASES {
@@ -1419,6 +1499,38 @@ mod requests_help_tests {
 
     /// Shapes that have made argument scanners panic: nothing, a bare boundary, repeated
     /// boundaries, a lone dash, empty strings and non-UTF8.
+    /// A tool that forwards past `--` is handing another program its argv, so a request
+    /// there is still a request. For one that does not, the same tokens are operands.
+    #[test]
+    fn a_forwarded_boundary_is_another_programs_argv() {
+        // `cargo test -- --help` is libtest's usage; an integration case for it would
+        // rebuild this crate's test binaries, so it is pinned here.
+        assert!(asks("cargo", &["test", "--", "--help"]));
+        assert!(asks("cargo", &["test", "--", "-h"]));
+        assert!(asks("uv", &["run", "--", "pytest", "--help"]));
+        assert!(asks("go", &["test", "--", "-h"]));
+        assert!(asks("npx", &["--no-install", "--", "tsc", "--help"]));
+
+        // cargo build does not forward, so there the boundary still ends the scan.
+        assert!(!asks("cargo", &["build", "--", "--help"]));
+        assert!(!asks("grep", &["--", "--help", "f.txt"]));
+        assert!(!asks("git", &["log", "--", "--help"]));
+    }
+
+    /// A flag that carries a value is naming something, not asking for usage.
+    #[test]
+    fn a_value_is_not_a_request() {
+        assert!(!asks(
+            "cargo",
+            &["install", "ripgrep", "--version", "1.2.3"]
+        ));
+        assert!(
+            asks("cargo", &["install", "--version"]),
+            "alone it still asks"
+        );
+        assert!(!asks("cargo", &["build", "--help=never"]));
+    }
+
     #[test]
     fn fuzz_odd_argv_never_panics() {
         const ODD: &[&[&str]] = &[
@@ -1439,16 +1551,15 @@ mod requests_help_tests {
                 let _ = requests_help_args(tool, &owned);
             }
         }
-        // A cluster is not the flag: `-hh` is not `-h`.
-        assert!(!requests_help_args("cargo", &["-hh".to_string()]));
+        assert!(requests_help_args("cargo", &["-hh".to_string()]));
         // Case matters; tools spell it lowercase.
         assert!(!requests_help_args("cargo", &["--HELP".to_string()]));
     }
 
     #[test]
-    fn a_cluster_is_not_the_flag() {
-        assert!(!asks("ls", &["-lh"]));
-        assert!(!asks("cargo", &["-qh"]));
+    fn a_cluster_carries_the_flag_too() {
+        assert!(!asks("ls", &["-lh"]), "but -h is ls's own");
+        assert!(asks("cargo", &["-qh"]), "a cluster carries -h too");
         assert!(asks("git", &["log", "--help"]));
         assert!(!asks("git", &["log", "-5"]));
     }

@@ -36,6 +36,15 @@ fn on_path(tool: &str) -> Option<PathBuf> {
         .map(|d| d.join(tool))
 }
 
+/// The first line of a tool's page that identifies it: `GIT-LOG(1)`, `Usage: tsc`. A page
+/// from the wrong subcommand fails on this where a length check would pass.
+fn first_substantial_line(text: &str) -> &str {
+    text.lines()
+        .map(str::trim_end)
+        .find(|l| l.trim().len() > 8)
+        .unwrap_or("")
+}
+
 /// Clap names the program from argv[0], which is `rtk.exe` on Windows, so the marker
 /// stops at the stem. Getting this wrong made the "RTK did not answer" check below pass
 /// for the wrong reason on Windows.
@@ -214,6 +223,33 @@ const CASES: &[Case] = &[
         tool: "dotnet",
         native_args: &["build", "--help"],
     },
+    Case {
+        rtk_args: &["dotnet", "format", "--help"],
+        tool: "dotnet",
+        native_args: &["format", "--help"],
+    },
+    // Spellings a POSIX scan misreads: MSBuild's `-?`, Go's single-dash long name, and a
+    // request addressed past the tool's own boundary.
+    Case {
+        rtk_args: &["dotnet", "build", "-?"],
+        tool: "dotnet",
+        native_args: &["build", "-?"],
+    },
+    Case {
+        rtk_args: &["go", "vet", "-help"],
+        tool: "go",
+        native_args: &["vet", "-help"],
+    },
+    Case {
+        rtk_args: &["pnpm", "outdated", "--help"],
+        tool: "pnpm",
+        native_args: &["outdated", "--help"],
+    },
+    Case {
+        rtk_args: &["jest", "--help"],
+        tool: "jest",
+        native_args: &["--help"],
+    },
 ];
 
 #[test]
@@ -244,14 +280,14 @@ fn a_wrapped_tools_own_help_survives_rtk() {
             mine.code, native.code,
             "{label} exit code drifted from the tool's"
         );
-        // A summarising filter collapses the page to a line or two. Exact bytes are not
-        // asserted: `man` renders to the terminal it thinks it has, and a tool may print
-        // its own name from argv[0].
+        // Content, not length: a length check passes on a long page from the wrong
+        // subcommand, which is exactly what a bad `git_name` arm would return. Exact bytes
+        // are still not asserted, because `man` renders to the terminal it thinks it has
+        // and a tool may print its own name from argv[0].
+        let anchor = first_substantial_line(&native.text);
         assert!(
-            mine.text.len() * 2 >= native.text.len(),
-            "{label} returned {} bytes of the tool's {}:\n{}",
-            mine.text.len(),
-            native.text.len(),
+            mine.text.contains(anchor),
+            "{label} does not contain the tool's own first line {anchor:?}:\n{}",
             &mine.text[..mine.text.len().min(200)]
         );
     }

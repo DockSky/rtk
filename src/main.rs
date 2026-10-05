@@ -1824,11 +1824,39 @@ fn shell_split(input: &str) -> Vec<String> {
     discover::lexer::shell_split(input)
 }
 
+/// `pods` and `services` are RTK's own aliases for `get pods`/`get services`.
+enum K8sAlias {
+    /// Forward to the aliased subcommand and filter as usual.
+    Filtered(Vec<String>),
+    /// Run what the caller typed, unfiltered. `extra` exists so a usage request reaches the
+    /// tool; anything else would land on a `get` RTK has pinned to `-o json`, where `-o wide`
+    /// fights the parser. Those stay what they were before the field existed: the literal
+    /// `kubectl pods …`, which the tool answers itself.
+    Raw(Vec<OsString>),
+}
+
+#[cfg(test)]
+impl K8sAlias {
+    fn filtered_args(self) -> Vec<String> {
+        match self {
+            K8sAlias::Filtered(args) => args,
+            K8sAlias::Raw(argv) => panic!("expected a filtered run, got {argv:?}"),
+        }
+    }
+}
+
 fn build_k8s_namespace_args(
+    alias: &str,
     namespace: Option<String>,
     all: bool,
     extra: Vec<String>,
-) -> Vec<String> {
+) -> K8sAlias {
+    let extra = core::args_utils::restore_double_dash(&extra);
+    if !extra.is_empty() && !core::runner::requests_help_args("kubectl", &extra) {
+        let mut raw = vec![OsString::from(alias)];
+        raw.extend(extra.iter().map(OsString::from));
+        return K8sAlias::Raw(raw);
+    }
     let mut args = Vec::new();
     if all {
         args.push("-A".to_string());
@@ -1836,8 +1864,8 @@ fn build_k8s_namespace_args(
         args.push("-n".to_string());
         args.push(n);
     }
-    args.extend(core::args_utils::restore_double_dash(&extra));
-    args
+    args.extend(extra);
+    K8sAlias::Filtered(args)
 }
 
 fn build_k8s_logs_args(pod: String, container: Option<String>) -> Vec<String> {
@@ -2533,18 +2561,26 @@ fn run_cli() -> Result<i32> {
                 namespace,
                 all,
                 extra,
-            } => {
-                let args = build_k8s_namespace_args(namespace, all, extra);
-                container::run(container::ContainerCmd::KubectlPods, &args, cli.verbose)?
-            }
+            } => match build_k8s_namespace_args("pods", namespace, all, extra) {
+                K8sAlias::Filtered(args) => {
+                    container::run(container::ContainerCmd::KubectlPods, &args, cli.verbose)?
+                }
+                K8sAlias::Raw(argv) => {
+                    core::runner::run_passthrough("kubectl", &argv, cli.verbose)?
+                }
+            },
             KubectlCommands::Services {
                 namespace,
                 all,
                 extra,
-            } => {
-                let args = build_k8s_namespace_args(namespace, all, extra);
-                container::run(container::ContainerCmd::KubectlServices, &args, cli.verbose)?
-            }
+            } => match build_k8s_namespace_args("services", namespace, all, extra) {
+                K8sAlias::Filtered(args) => {
+                    container::run(container::ContainerCmd::KubectlServices, &args, cli.verbose)?
+                }
+                K8sAlias::Raw(argv) => {
+                    core::runner::run_passthrough("kubectl", &argv, cli.verbose)?
+                }
+            },
             KubectlCommands::Logs { pod, container: c } => {
                 let args = build_k8s_logs_args(pod, c);
                 container::run(container::ContainerCmd::KubectlLogs, &args, cli.verbose)?
@@ -2558,18 +2594,18 @@ fn run_cli() -> Result<i32> {
                 namespace,
                 all,
                 extra,
-            } => {
-                let args = build_k8s_namespace_args(namespace, all, extra);
-                container::k8s_pods("oc", &args, cli.verbose)?
-            }
+            } => match build_k8s_namespace_args("pods", namespace, all, extra) {
+                K8sAlias::Filtered(args) => container::k8s_pods("oc", &args, cli.verbose)?,
+                K8sAlias::Raw(argv) => core::runner::run_passthrough("oc", &argv, cli.verbose)?,
+            },
             OcCommands::Services {
                 namespace,
                 all,
                 extra,
-            } => {
-                let args = build_k8s_namespace_args(namespace, all, extra);
-                container::k8s_services("oc", &args, cli.verbose)?
-            }
+            } => match build_k8s_namespace_args("services", namespace, all, extra) {
+                K8sAlias::Filtered(args) => container::k8s_services("oc", &args, cli.verbose)?,
+                K8sAlias::Raw(argv) => core::runner::run_passthrough("oc", &argv, cli.verbose)?,
+            },
             OcCommands::Logs { pod, container: c } => {
                 let args = build_k8s_logs_args(pod, c);
                 container::k8s_logs("oc", &args, cli.verbose)?
@@ -4504,6 +4540,60 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    /// Commands that wrap nothing are not in `RTK_META_COMMANDS`, so the fuzz above never
+    /// reaches them. Removing the `forwards_to_native_tool` early return passes everything
+    /// else and breaks exactly these: `read` and `log` fall back to resolving a binary of
+    /// that name, `diff` and `env` print GNU's usage.
+    #[test]
+    fn rtk_commands_that_wrap_nothing_keep_their_help() {
+        let root = rtk_command();
+        for name in ["read", "diff", "log", "env", "json", "deps", "smart"] {
+            let sub = root
+                .get_subcommands()
+                .find(|s| s.get_name() == name)
+                .unwrap_or_else(|| panic!("missing subcommand {name}"));
+            assert!(
+                !forwards_to_native_tool(sub),
+                "`rtk {name}` wraps nothing, so it must not be treated as a wrapper"
+            );
+            assert!(
+                !sub.is_disable_help_flag_set(),
+                "`rtk {name} --help` is RTK's own"
+            );
+        }
+    }
+
+    /// `pods` is RTK's alias for `get pods`, so `extra` carries a usage request down and
+    /// nothing else: anything more would reach a `get` already pinned to `-o json`.
+    #[test]
+    fn k8s_alias_forwards_only_a_usage_request() {
+        let owned = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let filtered = |all, extra: &[&str]| {
+            build_k8s_namespace_args("pods", None, all, owned(extra)).filtered_args()
+        };
+
+        assert_eq!(filtered(true, &[]), vec!["-A"]);
+        assert_eq!(
+            build_k8s_namespace_args("pods", Some("kube-system".into()), false, Vec::new())
+                .filtered_args(),
+            vec!["-n", "kube-system"]
+        );
+        // The request is appended after the namespace flags RTK adds.
+        assert_eq!(filtered(true, &["--help"]), vec!["-A", "--help"]);
+        assert_eq!(filtered(false, &["-h"]), vec!["-h"]);
+
+        // Anything else runs as the caller typed it, which is what kubectl answers itself.
+        match build_k8s_namespace_args("pods", None, true, owned(&["-o", "wide"])) {
+            K8sAlias::Raw(argv) => assert_eq!(
+                argv.iter()
+                    .map(|a| a.to_string_lossy().into_owned())
+                    .collect::<Vec<_>>(),
+                vec!["pods", "-o", "wide"]
+            ),
+            K8sAlias::Filtered(args) => panic!("expected a raw run, got {args:?}"),
         }
     }
 
