@@ -36,6 +36,12 @@ fn on_path(tool: &str) -> Option<PathBuf> {
         .map(|d| d.join(tool))
 }
 
+/// A tool prints its own name from argv[0], and on Windows this harness reaches `pip.EXE`
+/// where rtk reaches `pip`. The page is the same; only that spelling differs.
+fn without_exe(text: &str) -> String {
+    text.replace(".EXE", "").replace(".exe", "")
+}
+
 /// The first line of a tool's page that identifies it: `GIT-LOG(1)`, `Usage: tsc`. A page
 /// from the wrong subcommand fails on this where a length check would pass.
 fn first_substantial_line(text: &str) -> &str {
@@ -284,9 +290,9 @@ fn a_wrapped_tools_own_help_survives_rtk() {
         // subcommand, which is exactly what a bad `git_name` arm would return. Exact bytes
         // are still not asserted, because `man` renders to the terminal it thinks it has
         // and a tool may print its own name from argv[0].
-        let anchor = first_substantial_line(&native.text);
+        let anchor = without_exe(first_substantial_line(&native.text));
         assert!(
-            mine.text.contains(anchor),
+            without_exe(&mine.text).contains(&anchor),
             "{label} does not contain the tool's own first line {anchor:?}:\n{}",
             &mine.text[..mine.text.len().min(200)]
         );
