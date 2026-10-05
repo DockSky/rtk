@@ -10,6 +10,8 @@
 //! anywhere and covers whatever the machine has. Commands are spawned directly, never
 //! through a shell, so a `grep` shell function cannot stand in for the real binary.
 
+mod common;
+
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -54,14 +56,16 @@ struct Output {
     code: i32,
 }
 
-fn run(program: &PathBuf, args: &[&str]) -> Output {
-    let out = Command::new(program)
+/// `LC_ALL=C` on both sides, since a tool's usage is translated and the two are compared
+/// byte for byte. `MANWIDTH`/`COLUMNS` pin the width `man` renders a git page at.
+fn finish(mut cmd: Command, args: &[&str], label: &str) -> Output {
+    let out = cmd
         .args(args)
         .env("LC_ALL", "C")
         .env("MANWIDTH", "80")
         .env("COLUMNS", "80")
         .output()
-        .unwrap_or_else(|e| panic!("spawn {}: {e}", program.display()));
+        .unwrap_or_else(|e| panic!("spawn {label}: {e}"));
     let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
     text.push_str(&String::from_utf8_lossy(&out.stderr));
     Output {
@@ -70,8 +74,14 @@ fn run(program: &PathBuf, args: &[&str]) -> Output {
     }
 }
 
-fn rtk() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_rtk"))
+fn run(program: &PathBuf, args: &[&str]) -> Output {
+    finish(Command::new(program), args, &program.display().to_string())
+}
+
+/// rtk with its tracking database and tee spool redirected to this test's scratch
+/// directory; `core::test_isolation` fails the suite on a spawn that skips this.
+fn run_rtk(args: &[&str]) -> Output {
+    finish(common::rtk_command(), args, "rtk")
 }
 
 /// `rtk <rtk_args>` must answer with what `<tool> <native_args>` answers.
@@ -208,7 +218,6 @@ const CASES: &[Case] = &[
 
 #[test]
 fn a_wrapped_tools_own_help_survives_rtk() {
-    let rtk = rtk();
     let mut checked = 0usize;
     let mut skipped = Vec::new();
 
@@ -222,7 +231,7 @@ fn a_wrapped_tools_own_help_survives_rtk() {
             continue;
         };
         let label = format!("rtk {}", case.rtk_args.join(" "));
-        let mine = run(&rtk, case.rtk_args);
+        let mine = run_rtk(case.rtk_args);
         let native = run(&tool, case.native_args);
         checked += 1;
 
@@ -282,7 +291,7 @@ fn grep_dash_h_searches_and_drops_the_filename() {
         vec!["alpha", "-h", &a, &b],
         vec!["-h", "-n", "alpha", &a, &b],
     ] {
-        let mine = run(&rtk(), &[&["grep"], flags.as_slice()].concat());
+        let mine = run_rtk(&[&["grep"], flags.as_slice()].concat());
         let native = run(&grep, &flags);
         assert_eq!(
             mine.text,
@@ -315,7 +324,7 @@ fn a_tools_own_dash_h_is_still_filtered() {
         let Some(native) = on_path(tool) else {
             continue;
         };
-        let mine = run(&rtk(), &[&[tool], args.as_slice()].concat());
+        let mine = run_rtk(&[&[tool], args.as_slice()].concat());
         let theirs = run(&native, &args);
         assert!(
             !mine.text.is_empty(),
@@ -338,7 +347,6 @@ fn a_tools_own_dash_h_is_still_filtered() {
 /// above and leave no way to read RTK's usage.
 #[test]
 fn rtks_own_help_is_still_rtks() {
-    let rtk = rtk();
     for args in [
         vec!["--help"],
         vec!["-h"],
@@ -347,7 +355,7 @@ fn rtks_own_help_is_still_rtks() {
         vec!["init", "--help"],
         vec!["help", "grep"],
     ] {
-        let out = run(&rtk, &args);
+        let out = run_rtk(&args);
         assert!(
             is_rtk_usage(&out.text),
             "rtk {} should print RTK's own usage, got:\n{}",
