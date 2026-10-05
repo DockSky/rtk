@@ -573,17 +573,21 @@ fn only_user_dirs_resolves_user_locations() {
 fn every_variable_rtk_reads_is_redirected_for_a_child() {
     let mut read = Vec::new();
     for (relative, code) in source_code() {
-        if RESOLVERS.contains(&relative.as_str()) {
-            continue;
-        }
+        // A resolver is not exempt here, only forgiven its own forwarding: it
+        // defines the accessors, so `var_os(name)` names no variable. A
+        // literal read in one is a variable the child still inherits, and
+        // `user_dirs` is where the next one would naturally be written.
+        let resolver = RESOLVERS.contains(&relative.as_str());
         for head in ACCESSOR_READ.find_iter(&code) {
             let (text, arg) = call_text(&code, head);
-            let name = env_var_name(arg.trim_end_matches(',').trim()).unwrap_or_else(|| {
-                panic!(
+            let Some(name) = env_var_name(arg.trim_end_matches(',').trim()) else {
+                assert!(
+                    resolver,
                     "{relative}: {text} names no variable `env_var_name` can resolve; \
                      name it with a literal, or add the constant there"
-                )
-            });
+                );
+                continue;
+            };
             read.push((relative.clone(), name));
         }
     }
