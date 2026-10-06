@@ -12,7 +12,7 @@ const MAX_PIPE_DIRS: usize = CAP_LIST;
 pub fn resolve_filter(name: &str) -> Option<fn(&str) -> String> {
     match name {
         "cargo-test" | "cargo" => Some(crate::cmds::rust::cargo_cmd::filter_cargo_test),
-        "pytest" => Some(crate::cmds::python::pytest_cmd::filter_pytest_output),
+        "pytest" => Some(pytest_wrapper),
         "go-test" => Some(go_test_wrapper),
         "go-build" => Some(crate::cmds::go::go_cmd::filter_go_build),
         "ctest" => Some(crate::cmds::system::ctest_cmd::filter_ctest_output),
@@ -42,6 +42,14 @@ pub fn resolve_filter(name: &str) -> Option<fn(&str) -> String> {
 
 fn go_test_wrapper(input: &str) -> String {
     crate::cmds::go::go_cmd::filter_go_test_json(input)
+}
+
+fn pytest_wrapper(input: &str) -> String {
+    // pytest colorizes its summary line; the pipe path receives raw ANSI
+    // and must strip it before parsing (tool mode already strips).
+    crate::cmds::python::pytest_cmd::filter_pytest_output(
+        &crate::core::utils::strip_ansi(input),
+    )
 }
 
 fn git_status_wrapper(input: &str) -> String {
@@ -310,6 +318,16 @@ mod tests {
         let f = auto_detect_filter(input);
         let out = f(input);
         assert_eq!(out, input, "should pass through unchanged, got: {}", out);
+    }
+
+    #[test]
+    fn test_pipe_pytest_strips_ansi_before_parsing() {
+        // A colored pytest summary must not be reported as "No tests collected".
+        let input = "\u{1b}[32m===== \u{1b}[32m\u{1b}[1m12 passed\u{1b}[0m\u{1b}[32m in 21.90s\u{1b}[0m\u{1b}[32m =====\u{1b}[0m\n";
+        let f = resolve_filter("pytest").expect("pytest filter must exist");
+        let out = f(input);
+        assert!(out.contains("12 passed"), "out={}", out);
+        assert!(!out.contains("No tests collected"), "out={}", out);
     }
 
     #[test]
