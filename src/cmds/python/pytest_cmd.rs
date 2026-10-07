@@ -62,7 +62,10 @@ pub fn run(args: &[String], verbose: u8) -> Result<i32> {
             let filtered = filter_pytest_output(raw);
             // Any other failure parsed as empty means the run broke before reporting.
             if exit_code != 0 && exit_code != PYTEST_EXIT_NO_TESTS && filtered == PYTEST_NO_TESTS {
-                return truncate(strip_ansi(raw).trim(), config::limits().passthrough_max_chars);
+                return truncate(
+                    strip_ansi(raw).trim(),
+                    config::limits().passthrough_max_chars,
+                );
             }
             filtered
         },
