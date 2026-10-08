@@ -2911,6 +2911,10 @@ error: could not compile `rtk` (test "repro_compile_fail") due to 1 previous err
         let input = "\u{1b}[32m   Compiling\u{1b}[0m rtk v0.49.0\n\u{1b}[32m    Finished\u{1b}[0m test profile\nrunning 2 tests\ntest foo ... \u{1b}[32mok\u{1b}[0m\ntest bar ... \u{1b}[32mok\u{1b}[0m\n\ntest result: \u{1b}[32mok\u{1b}[0m. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n";
         let out = filter_cargo_test(input);
         assert!(out.contains("2 passed"), "out={}", out);
-        assert!(!out.contains("\u{1b}"), "ANSI codes should be stripped, out={}", out);
+        assert!(
+            !out.contains("\u{1b}"),
+            "ANSI codes should be stripped, out={}",
+            out
+        );
     }
 }
